@@ -30,3 +30,5 @@ net.floodlightcontroller.statistics.StatisticsCollector
 net.floodlightcontroller.routing.RoutingManager
 net.floodlightcontroller.cpanalyzer.CPAnalyzer
 net.floodlightcontroller.hasupport.HAController
+net.floodlightcontroller.testModule.TestModule
+net.floodlightcontroller.simpleigmp.SimpleIGMP
