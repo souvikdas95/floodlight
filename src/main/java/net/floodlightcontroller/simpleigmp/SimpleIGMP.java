@@ -10,24 +10,19 @@ import java.util.List;
 import org.projectfloodlight.openflow.protocol.OFFlowMod;
 import org.projectfloodlight.openflow.protocol.OFFlowModCommand;
 import org.projectfloodlight.openflow.protocol.OFFlowModFlags;
-import org.projectfloodlight.openflow.protocol.OFFlowRemoved;
 import org.projectfloodlight.openflow.protocol.OFMessage;
 import org.projectfloodlight.openflow.protocol.OFPacketIn;
-import org.projectfloodlight.openflow.protocol.OFPacketOut;
 import org.projectfloodlight.openflow.protocol.OFType;
 import org.projectfloodlight.openflow.protocol.OFVersion;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.match.Match;
 import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.types.EthType;
-import org.projectfloodlight.openflow.types.IPAddress;
 import org.projectfloodlight.openflow.types.IPv4Address;
 import org.projectfloodlight.openflow.types.IpProtocol;
 import org.projectfloodlight.openflow.types.MacAddress;
 import org.projectfloodlight.openflow.types.OFBufferId;
 import org.projectfloodlight.openflow.types.OFPort;
-import org.projectfloodlight.openflow.types.OFValueType;
-import org.projectfloodlight.openflow.types.OFVlanVidMatch;
 import org.projectfloodlight.openflow.types.U64;
 import org.projectfloodlight.openflow.types.VlanVid;
 import org.slf4j.Logger;
@@ -37,19 +32,15 @@ import net.floodlightcontroller.core.FloodlightContext;
 import net.floodlightcontroller.core.IFloodlightProviderService;
 import net.floodlightcontroller.core.IOFMessageListener;
 import net.floodlightcontroller.core.IOFSwitch;
-import net.floodlightcontroller.core.IListener.Command;
 import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
 import net.floodlightcontroller.core.types.MacVlanPair;
 import net.floodlightcontroller.packet.Ethernet;
-import net.floodlightcontroller.packet.ICMP;
 import net.floodlightcontroller.packet.IPv4;
-import net.floodlightcontroller.packet.IPv6;
 import net.floodlightcontroller.simpleigmp.IGMP.IGMPv3GroupRecord;
 import net.floodlightcontroller.util.FlowModUtils;
-import net.floodlightcontroller.util.OFMessageUtils;
 
 public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
 
@@ -71,6 +62,7 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
 	public static final long SIMPLE_IGMP_COOKIE = (long) (SIMPLE_IGMP_APP_ID & ((1 << APP_ID_BITS) - 1)) << APP_ID_SHIFT;
 	
 	// Config Params
+	protected static boolean DEBUG = false;
 	protected static short FLOWMOD_PRIORITY = 200;
 
 	// Processes PacketIn Message
@@ -128,7 +120,8 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
     					
     					if (groupRecord.getRecordType() == groupRecord.RECORD_TYPE_CHANGE_TO_EXCLUDE_MODE) // Join Group
     					{
-    						logger.info("PACKET_IN: Received Join Group Request");
+    						if (DEBUG)
+    							logger.info(String.format("PACKET_IN: [IGMP:JOIN] [Source:'%s'] [Group:'%s'] [Switch:'%s']", ipv4.getSourceAddress(), mcastAddress, sw));
     						
     						// Add MAC Table Entries
     		        		// Note: It's expected that the membership reports will
@@ -152,7 +145,8 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
     					}
     					else if (groupRecord.getRecordType() == groupRecord.RECORD_TYPE_CHANGE_TO_INCLUDE_MODE) // Leave Group
     					{
-    						logger.info("PACKET_IN: Received Leave Group Request");
+    						if (DEBUG)
+    							logger.info(String.format("PACKET_IN: [IGMP:LEAVE] [Source:'%s'] [Group:'%s'] [Switch:'%s']", ipv4.getSourceAddress(), mcastAddress, sw));    						
     						
     						// Remove Multicast Group Member
     						if (igmpTable.has(mcastAddress, sourceMACAddress, vlan))
@@ -176,9 +170,19 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
         	}
         	else
         	{
+        		// Validate Destination IP for Multicast
         		IPv4Address destIPAddress = ipv4.getDestinationAddress();
-        		if (destIPAddress == null || !destIPAddress.isMulticast() || !igmpTable.isGroup(destIPAddress))
+        		if (destIPAddress == null || !destIPAddress.isMulticast())
         		{
+        			return Command.CONTINUE;
+        		}
+        		
+        		// Check if address belongs to IGMP Table
+        		if (!igmpTable.isGroup(destIPAddress))
+        		{
+        			if (DEBUG)
+        				logger.info(String.format("PACKET_IN: Mcast Address '%s' not known to Switch '%s'", destIPAddress, sw));
+        			
         			return Command.CONTINUE;
         		}
         		
@@ -220,13 +224,25 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
         		// Install Flow
         		// Note: If outPorts is empty, then packets will be dropped by this flow rule.
         		this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, match, outPorts);
+        		
+        		// Log Flowmod Add
+        		if (DEBUG)
+        		{
+        			StringBuilder sbOut = new StringBuilder();
+	        		for (OFPort outPort: outPorts)
+	        		{
+	        			sbOut.append("'" + outPort + "'");
+	        			sbOut.append(",");
+	        		}
+	        		logger.info(String.format("PACKET_IN: [FLOWMOD:ADD] [SWITCH:'%s'] [IN_PORT:'%s'] [IPV4_DST:'%s'] [OUTPORTS:{%s}]", sw, inPort, destIPAddress, sbOut));
+        		}
         	}
         }
 		
 		return Command.CONTINUE;
 	}
 
-	private void pushPacket(IOFSwitch sw, Match match, OFPacketIn msg, Set<OFPort> outPorts)
+	/*private void pushPacket(IOFSwitch sw, Match match, OFPacketIn msg, Set<OFPort> outPorts)
 	{
 		if (msg == null)
 		{
@@ -272,7 +288,7 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
 
 		// Write to switch
 		sw.write(pob.build());
-	}
+	}*/
 	
 	private void writeFlowMod(IOFSwitch sw, OFFlowModCommand command, OFBufferId bufferId, Match match, Set<OFPort> outPorts)
 	{
@@ -386,34 +402,49 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
 	    {
 	    	IPv4.protocolClassMap.put(IpProtocol.IGMP, IGMP.class);
 	    }
-	    
-	    logger.info("Init");
 	}
 
 	@Override
 	public void startUp(FloodlightModuleContext context) throws FloodlightModuleException
 	{
-		logger.info("StartUp");
-		
 		floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
 		
 		Map<String, String> configOptions = context.getConfigParams(this);
 		
-		// Get FLOWMOD_PRIORITY
+		// Get DEBUG
 		try
 		{
-			String priority = configOptions.get("priority");
-			if (priority != null)
+			String debug = configOptions.get("debug");
+			if (debug != null)
 			{
-				FLOWMOD_PRIORITY = Short.parseShort(priority);
+				DEBUG = (debug.charAt(0) == 'T' || debug.charAt(0) == 't') ? true : false;
 			}
 		} 
 		catch (NumberFormatException e)
 		{
-			logger.warn("Error parsing flow priority, " +
+			logger.warn("Error parsing 'debug', " +
+					"using default of {}",
+					DEBUG);
+		}
+		
+		// Get FLOWMOD_PRIORITY
+		try
+		{
+			String flow_priority = configOptions.get("flow_priority");
+			if (flow_priority != null)
+			{
+				FLOWMOD_PRIORITY = Short.parseShort(flow_priority);
+			}
+		} 
+		catch (NumberFormatException e)
+		{
+			logger.warn("Error parsing 'flow_priority', " +
 					"using default of {}",
 					FLOWMOD_PRIORITY);
 		}
+		
+		if (DEBUG)
+			logger.info("StartUp: SimpleIGMP Module");
 	}
 
 }
