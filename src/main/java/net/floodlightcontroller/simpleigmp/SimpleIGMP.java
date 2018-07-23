@@ -13,6 +13,7 @@ import org.projectfloodlight.openflow.protocol.OFFlowModFlags;
 import org.projectfloodlight.openflow.protocol.OFFlowRemoved;
 import org.projectfloodlight.openflow.protocol.OFMessage;
 import org.projectfloodlight.openflow.protocol.OFPacketIn;
+import org.projectfloodlight.openflow.protocol.OFPacketOut;
 import org.projectfloodlight.openflow.protocol.OFType;
 import org.projectfloodlight.openflow.protocol.OFVersion;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
@@ -127,7 +128,9 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
     					
     					if (groupRecord.getRecordType() == groupRecord.RECORD_TYPE_CHANGE_TO_EXCLUDE_MODE) // Join Group
     					{
-    		        		// Add MAC Table Entries
+    						logger.info("PACKET_IN: Received Join Group Request");
+    						
+    						// Add MAC Table Entries
     		        		// Note: It's expected that the membership reports will
     		        		// reach each and every switch. So, it's just enough for
     		        		// us to populate a reference MACTable that can be used
@@ -138,9 +141,19 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
     		        		// Add Multicast Group Member
     		        		if (!igmpTable.has(mcastAddress, sourceMACAddress, vlan))
     		        			igmpTable.add(mcastAddress, sourceMACAddress, vlan);
+    		        		
+        					// Invalidate all existing flow mods belonging to this mcast group
+    						// to allow re-establishment of routes
+        	        		Match.Builder matchBuilder = sw.getOFFactory().buildMatch();
+        	        		matchBuilder.setExact(MatchField.ETH_TYPE, EthType.IPv4)
+        	        					.setExact(MatchField.IPV4_DST, mcastAddress);
+        	        		Match match = matchBuilder.build();
+        	        		this.writeFlowMod(sw, OFFlowModCommand.DELETE, OFBufferId.NO_BUFFER, match, null);
     					}
     					else if (groupRecord.getRecordType() == groupRecord.RECORD_TYPE_CHANGE_TO_INCLUDE_MODE) // Leave Group
     					{
+    						logger.info("PACKET_IN: Received Leave Group Request");
+    						
     						// Remove Multicast Group Member
     						if (igmpTable.has(mcastAddress, sourceMACAddress, vlan))
     							igmpTable.remove(mcastAddress, sourceMACAddress, vlan);
@@ -149,14 +162,15 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
     						// part of any Group
     						if (!igmpTable.isMember(sourceMACAddress, vlan))
     							macTable.removeFromPortMap(sw, sourceMACAddress, vlan);
+    						
+        					// Invalidate all existing flow mods belonging to this mcast group
+    						// to allow re-establishment of routes
+        	        		Match.Builder matchBuilder = sw.getOFFactory().buildMatch();
+        	        		matchBuilder.setExact(MatchField.ETH_TYPE, EthType.IPv4)
+        	        					.setExact(MatchField.IPV4_DST, mcastAddress);
+        	        		Match match = matchBuilder.build();
+        	        		this.writeFlowMod(sw, OFFlowModCommand.DELETE, OFBufferId.NO_BUFFER, match, null);
     					}
-    					
-    					// Invalidate all existing flow mods belonging to this mcast group
-    	        		Match.Builder matchBuilder = sw.getOFFactory().buildMatch();
-    	        		matchBuilder.setExact(MatchField.ETH_TYPE, EthType.IPv4)
-    	        					.setExact(MatchField.IPV4_DST, mcastAddress);
-    	        		Match match = matchBuilder.build();
-    	        		this.writeFlowMod(sw, OFFlowModCommand.DELETE, OFBufferId.NO_BUFFER, match, null);
     				}
     			}
         	}
@@ -198,18 +212,71 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
         					.setExact(MatchField.IPV4_DST, destIPAddress);
         		Match match = matchBuilder.build();
         		
-        		// Install Flow
-        		this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, match, outPorts);
+        		// Push Packet manually
+        		// Note: If outPorts is empty, then this packet will be dropped.
+        		// Note: Make sure to return Command.STOP
+        		// this.pushPacket(sw, match, msg, outPorts);
         		
-        		return Command.CONTINUE;
+        		// Install Flow
+        		// Note: If outPorts is empty, then packets will be dropped by this flow rule.
+        		this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, match, outPorts);
         	}
         }
 		
 		return Command.CONTINUE;
 	}
 
+	private void pushPacket(IOFSwitch sw, Match match, OFPacketIn msg, Set<OFPort> outPorts)
+	{
+		if (msg == null)
+		{
+			return;
+		}
+		
+		// Create PacketOut
+		OFPacketOut.Builder pob = sw.getOFFactory().buildPacketOut();
+
+		// Set Actions
+		if (outPorts != null && !outPorts.isEmpty())
+		{
+			List<OFAction> actions = new ArrayList<OFAction>();
+			for(OFPort outPort: outPorts)
+			{
+				actions.add(sw.getOFFactory().actions().buildOutput().setPort(outPort).setMaxLen(0xffFFffFF).build());
+			}
+			pob.setActions(actions);
+		}
+		
+		// Set BufferId (If switch supports it)
+		if (sw.getBuffers() == 0)
+		{
+			msg = msg.createBuilder().setBufferId(OFBufferId.NO_BUFFER).build();
+			pob.setBufferId(OFBufferId.NO_BUFFER);
+		}
+		else
+		{
+			pob.setBufferId(msg.getBufferId());
+		}
+
+		// Set Input Port
+		OFPort inPort = (msg.getVersion().compareTo(OFVersion.OF_12) < 0 ? msg.getInPort() : msg.getMatch().get(MatchField.IN_PORT));
+		OFMessageUtils.setInPort(pob, inPort);
+
+		// If BufferId is none or the switch doesn's support buffering
+		// We send the data with the PacketOut
+		if (msg.getBufferId() == OFBufferId.NO_BUFFER)
+		{
+			byte[] packetData = msg.getData();
+			pob.setData(packetData);
+		}
+
+		// Write to switch
+		sw.write(pob.build());
+	}
+	
 	private void writeFlowMod(IOFSwitch sw, OFFlowModCommand command, OFBufferId bufferId, Match match, Set<OFPort> outPorts)
 	{
+		// Create Flowmod Builder
 		OFFlowMod.Builder fmb;
 		if (command == OFFlowModCommand.DELETE)
 		{
@@ -229,6 +296,8 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
 		{
 			fmb.setOutPort(OFPort.ANY);
 		}
+		
+		// Create FlowModFlags
 		Set<OFFlowModFlags> sfmf = new HashSet<OFFlowModFlags>();
 		if (command != OFFlowModCommand.DELETE)
 		{
@@ -236,6 +305,7 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
 		}
 		fmb.setFlags(sfmf);
 
+		// Set Actions
 		if (outPorts != null && !outPorts.isEmpty())
 		{
 			List<OFAction> actions = new ArrayList<OFAction>();
@@ -246,6 +316,7 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
 			FlowModUtils.setActions(fmb, actions, sw);
 		}
 
+		// Write to switch
 		sw.write(fmb.build());
 	}
 	
@@ -255,8 +326,6 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
 		{
 			case PACKET_IN:
 				return this.processPacketInMessage(sw, (OFPacketIn) msg, cntx);
-			case ERROR:
-				return Command.CONTINUE;
 			default:
 				return Command.CONTINUE;
 		}
@@ -271,15 +340,13 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
 	@Override
 	public boolean isCallbackOrderingPrereq(OFType type, String name)
 	{
-		// TODO Auto-generated method stub
 		return false;
 	}
 
 	@Override
 	public boolean isCallbackOrderingPostreq(OFType type, String name)
 	{
-		// TODO Auto-generated method stub
-		return false;
+		return (type.equals(OFType.PACKET_IN) && (name.equals("learningswitch")));
 	}
 	
 
@@ -329,8 +396,6 @@ public class SimpleIGMP implements IFloodlightModule, IOFMessageListener {
 		logger.info("StartUp");
 		
 		floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
-		floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
-		floodlightProvider.addOFMessageListener(OFType.ERROR, this);
 		
 		Map<String, String> configOptions = context.getConfigParams(this);
 		
