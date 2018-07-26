@@ -14,6 +14,13 @@ public class SDP extends BasePacket
 {
 	protected SessionDescription sessionDescription;
 	
+	// Mighty Constructor
+	public SDP(IPacket packet) throws PacketParsingException
+	{
+		byte[] packetBytes = packet.serialize();
+		deserialize(packetBytes, 0, packetBytes.length);
+	}
+	
 	/**
 	 * @return the sessionDescription
 	 */
@@ -49,15 +56,11 @@ public class SDP extends BasePacket
 	@Override
 	public IPacket deserialize(byte[] data, int offset, int length) throws PacketParsingException
 	{
-		System.out.println("SDP 0");
 		String szData = new String(data, offset, length);
-		szData = szData.split("SDP\\:\\n", 2)[1];
-		System.out.println("szData = <" + szData + ">");
-		
+		szData = szData.substring(szData.indexOf("v="), szData.length());
 		try
 		{
 			sessionDescription = SDPFactory.parseSessionDescription(szData);
-			System.out.println("SDP 1");
 		}
 		catch(SDPParseException ex)
 		{

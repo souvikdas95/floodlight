@@ -17,6 +17,13 @@ public class SAP extends BasePacket
 	protected IPv4Address sourceAddress;
 	protected int messageID;
 	
+	// Mighty Constructor
+	public SAP(IPacket packet) throws PacketParsingException
+	{
+		byte[] packetBytes = packet.serialize();
+		deserialize(packetBytes, 0, packetBytes.length);
+	}
+	
 	/**
 	 * @return the version
 	 */
@@ -77,7 +84,6 @@ public class SAP extends BasePacket
 	@Override
 	public IPacket deserialize(byte[] data, int offset, int length) throws PacketParsingException
 	{
-		System.out.println("SAP 0");
 		String[] szArrData = new String(data, offset, length).split("\\$", 2);
 		String[] szHeaderData = szArrData[0].split(",", 3);
 		try
@@ -89,7 +95,6 @@ public class SAP extends BasePacket
 				return null;
 			}
 			setVersion((byte)Integer.parseInt(szArrVersion[1]));
-			System.out.println("SAP 1");
 			
 			// Extract SourceAddress
 			String[] szArrSourceAddress = szHeaderData[1].split("=", 2);
@@ -98,7 +103,6 @@ public class SAP extends BasePacket
 				return null;
 			}
 			setSourceAddress(IPv4Address.of(szArrSourceAddress[1]));
-			System.out.println("SAP 2");
 			
 			// Extract MessageID
 			String[] szArrMessageID = szHeaderData[2].split("=", 2);
@@ -107,9 +111,8 @@ public class SAP extends BasePacket
 				return null;
 			}
 			setMessageID(Integer.parseInt(szArrMessageID[1]));
-			System.out.println("SAP 3");
 			
-			// Extract Payload
+			// Extract Payload (Optional)
 			if (szArrData.length < 2 || szArrData[1].isEmpty())
 			{
 				setPayload(new Data());
@@ -118,7 +121,6 @@ public class SAP extends BasePacket
 			{
 				setPayload(new Data(szArrData[1].getBytes()));
 			}
-			System.out.println("SAP 4");
 		}
 		catch(Exception ex)
 		{

@@ -141,10 +141,8 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IS
 				try
 				{
 					IDevice dstDevice = IDeviceService.fcStore.get(cntx, IDeviceService.CONTEXT_DST_DEVICE);
-					byte[] udpPayloadBytes = udp.getPayload().serialize();
-					SAP sap = (SAP) new SAP().deserialize(udpPayloadBytes, 0, udpPayloadBytes.length);
-					byte[] sapPayloadBytes = sap.getPayload().serialize();
-					SDP sdp = (SDP) new SDP().deserialize(sapPayloadBytes, 0, sapPayloadBytes.length);
+					SAP sap = new SAP(udp.getPayload());
+					SDP sdp = new SDP(sap.getPayload());
 					SessionDescription sessionDescription = sdp.getSessionDescription();
 					IPv4Address mcastAddress = IPv4Address.of(sessionDescription.getConnection()
 							.getAddress().split("/", 2)[0]);
