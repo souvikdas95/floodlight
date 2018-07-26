@@ -8,12 +8,12 @@ import net.floodlightcontroller.restserver.RestletRoutable;
 
 public class SessionManagerRoutable implements RestletRoutable
 {
-
 	@Override
 	public Restlet getRestlet(Context context)
 	{
 		Router router = new Router(context);
-        router.attach("/reset/json", SessionManagerResetResource.class);
+        router.attach("/reset", SessionManagerResetResource.class);
+        router.attach("/participants", SessionManagerParticipantsResource.class);
         return router;
 	}
 
@@ -22,5 +22,4 @@ public class SessionManagerRoutable implements RestletRoutable
 	{
 		return "/wm/sessionmanager";
 	}
-
 }

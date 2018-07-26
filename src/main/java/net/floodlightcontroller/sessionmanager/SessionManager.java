@@ -163,7 +163,6 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IS
 				{
 					return Command.CONTINUE;
 				}
-				
 			}
 		}
 		return Command.CONTINUE;
