@@ -77,43 +77,52 @@ public class SAP extends BasePacket
 	@Override
 	public IPacket deserialize(byte[] data, int offset, int length) throws PacketParsingException
 	{
-		String[] szArrData = new String(data, offset, length).split(",", 3);
+		System.out.println("SAP 0");
+		String[] szArrData = new String(data, offset, length).split("\\$", 2);
+		String[] szHeaderData = szArrData[0].split(",", 3);
 		try
-		{
-			String[] szArrVersion = szArrData[0].split("=", 2);
+		{			
+			// Extract Version
+			String[] szArrVersion = szHeaderData[0].split("=", 2);
 			if (!szArrVersion[0].equals("v"))
 			{
 				return null;
 			}
 			setVersion((byte)Integer.parseInt(szArrVersion[1]));
+			System.out.println("SAP 1");
 			
-			String[] szArrSourceAddress = szArrData[1].split("=", 2);
+			// Extract SourceAddress
+			String[] szArrSourceAddress = szHeaderData[1].split("=", 2);
 			if (!szArrSourceAddress[0].equals("srcIP"))
 			{
 				return null;
 			}
 			setSourceAddress(IPv4Address.of(szArrSourceAddress[1]));
+			System.out.println("SAP 2");
 			
-			String[] szArrEnd = szArrData[2].split("$", 2);
-			
-			String[] szArrMessageID = szArrEnd[0].split("=", 2);
+			// Extract MessageID
+			String[] szArrMessageID = szHeaderData[2].split("=", 2);
 			if (!szArrMessageID[0].equals("msgID"))
 			{
 				return null;
 			}
 			setMessageID(Integer.parseInt(szArrMessageID[1]));
+			System.out.println("SAP 3");
 			
-			if (szArrEnd.length < 2 || szArrEnd[1].isEmpty())
+			// Extract Payload
+			if (szArrData.length < 2 || szArrData[1].isEmpty())
 			{
 				setPayload(new Data());
 			}
 			else
 			{
-				setPayload(new Data(szArrEnd[1].getBytes()));
+				setPayload(new Data(szArrData[1].getBytes()));
 			}
+			System.out.println("SAP 4");
 		}
 		catch(Exception ex)
 		{
+			ex.printStackTrace();
 			return null;
 		}
 		

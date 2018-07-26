@@ -127,22 +127,24 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IS
 		if (eth.getEtherType() == EthType.IPv4)
 		{
 			IPv4 ip = (IPv4) eth.getPayload();
-			IPv4Address sourceAddress = ip.getSourceAddress();
+			IPv4Address destAddress = ip.getDestinationAddress();
 			if (ip.getProtocol() == IpProtocol.UDP &&
-					sourceAddress != null &&
-					sourceAddress != IPv4Address.NONE &&
-					!sourceAddress.isBroadcast() &&
-					!sourceAddress.isMulticast() &&
-					!sourceAddress.isLoopback() &&
-					!sourceAddress.isLinkLocal() &&
-					!sourceAddress.isCidrMask())
+					destAddress != null &&
+					destAddress != IPv4Address.NONE &&
+					!destAddress.isBroadcast() &&
+					!destAddress.isMulticast() &&
+					!destAddress.isLoopback() &&
+					!destAddress.isLinkLocal() &&
+					!destAddress.isCidrMask())
 			{
 				UDP udp = (UDP) ip.getPayload();
 				try
 				{
-					IDevice srcDevice = IDeviceService.fcStore.get(cntx, IDeviceService.CONTEXT_SRC_DEVICE);
-					SAP sap = (SAP) udp.getPayload();
-					SDP sdp = (SDP) sap.getPayload();
+					IDevice dstDevice = IDeviceService.fcStore.get(cntx, IDeviceService.CONTEXT_DST_DEVICE);
+					byte[] udpPayloadBytes = udp.getPayload().serialize();
+					SAP sap = (SAP) new SAP().deserialize(udpPayloadBytes, 0, udpPayloadBytes.length);
+					byte[] sapPayloadBytes = sap.getPayload().serialize();
+					SDP sdp = (SDP) new SDP().deserialize(sapPayloadBytes, 0, sapPayloadBytes.length);
 					SessionDescription sessionDescription = sdp.getSessionDescription();
 					IPv4Address mcastAddress = IPv4Address.of(sessionDescription.getConnection()
 							.getAddress().split("/", 2)[0]);
@@ -150,12 +152,12 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IS
 					{
 						@SuppressWarnings("unchecked")
 						HashSet<IDevice> participantsSet = (HashSet<IDevice>) participantsMap.get(mcastAddress);
-						participantsSet.add(srcDevice);
+						participantsSet.add(dstDevice);
 					}
 					else
 					{
 						HashSet<IDevice> participantsSet = new HashSet<IDevice>();
-						participantsSet.add(srcDevice);
+						participantsSet.add(dstDevice);
 						participantsMap.put(mcastAddress, participantsSet);
 					}
 				}

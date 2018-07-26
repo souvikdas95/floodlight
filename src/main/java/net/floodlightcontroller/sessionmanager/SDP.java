@@ -49,10 +49,15 @@ public class SDP extends BasePacket
 	@Override
 	public IPacket deserialize(byte[] data, int offset, int length) throws PacketParsingException
 	{
+		System.out.println("SDP 0");
 		String szData = new String(data, offset, length);
+		szData = szData.split("SDP\\:\\n", 2)[1];
+		System.out.println("szData = <" + szData + ">");
+		
 		try
 		{
 			sessionDescription = SDPFactory.parseSessionDescription(szData);
+			System.out.println("SDP 1");
 		}
 		catch(SDPParseException ex)
 		{
