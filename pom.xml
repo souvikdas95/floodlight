@@ -17,6 +17,11 @@
 			<name>Sonatype OSS snapshot repository</name>
 			<url>https://oss.sonatype.org/content/repositories/snapshots</url>
 		</repository>
+        <repository>
+            <id>jsdp</id>
+            <name>jSDP Project Repository</name>
+            <url>http://jsdp.sourceforge.net/maven2</url>
+        </repository>
 	</repositories>
 	<build>
 		<plugins>
