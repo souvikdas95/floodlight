@@ -1429,4 +1429,9 @@ public class TopologyInstance {
     public Set<DatapathId> getArchipelagoIds() {
         return archipelagos.stream().map(Archipelago::getId).collect(Collectors.toSet());
     }
+
+	public Path getMulticastPath(DatapathId src, OFPort srcPort, DatapathId dst) {
+		// TODO Auto-generated method stub
+		return null;
+	}
 } 

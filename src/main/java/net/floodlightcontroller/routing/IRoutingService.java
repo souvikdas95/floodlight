@@ -211,4 +211,9 @@ public interface IRoutingService extends IFloodlightService {
      * @return true upon success; false otherwise
      */
     boolean forceRecompute();
+    
+    /**
+     * For Multicast use only
+     */
+	Path getMulticastPath(DatapathId src, OFPort srcPort, DatapathId dst);
 }

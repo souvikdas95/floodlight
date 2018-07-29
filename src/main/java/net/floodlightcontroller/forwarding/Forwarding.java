@@ -220,8 +220,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
                     return Command.CONTINUE;
 
                 case MULTICAST:
-                    // treat as broadcast
-                    doFlood(sw, pi, decision, cntx);
+                	doMulticast(sw, pi, decision, cntx, null, false);
                     return Command.CONTINUE;
 
                 case DROP:
@@ -237,7 +236,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         else { // No routing decision was found
             switch(determineRoutingType()) {
                 case FORWARDING:
-                    // L2 Forward to destination or flood if bcast or mcast
+                    // L2 Forward to destination or doMulticast if mcast or flood if bcast
                     if (log.isTraceEnabled()) {
                         log.trace("No decision was made for PacketIn={}, do L2 forwarding", pi);
                     }
@@ -273,7 +272,120 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         return Command.CONTINUE;
     }
 
-    /**
+    private void doMulticast(IOFSwitch sw, OFPacketIn pi, IRoutingDecision decision, FloodlightContext cntx,
+    		VirtualGatewayInstance gatewayInstance, boolean requestFlowRemovedNotifn) {    	    	
+		/*
+		 *  TODO: L3 Multicast Routing
+		 */
+    	if (gatewayInstance != null) {
+			doFlood(sw, pi, decision, cntx);
+		}
+    	
+    	Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
+    	OFPort srcPort = OFMessageUtils.getInPort(pi);
+    	
+        DatapathId srcSw = sw.getId();
+        IDevice srcDevice = IDeviceService.fcStore.get(cntx, IDeviceService.CONTEXT_SRC_DEVICE);
+        
+        if (srcDevice == null) {
+            log.error("No device entry found for source device. Is the device manager running? If so, report bug.");
+            return;
+        }
+
+        /* Some physical switches partially support or do not support ARP flows */
+        if (FLOOD_ALL_ARP_PACKETS &&
+        		eth.getEtherType() == EthType.ARP) {
+            log.debug("ARP flows disabled in Forwarding. Flooding ARP packet");
+            doFlood(sw, pi, decision, cntx);
+            return;
+        }
+
+        /* This packet-in is from a switch in the path before its flow was installed along the path */
+        if (!topologyService.isEdge(srcSw, srcPort)) {
+            log.debug("Packet destination is known, but packet was not received on an edge port (rx on {}/{}). Flooding packet", srcSw, srcPort);
+            doFlood(sw, pi, decision, cntx);
+            return;
+        }
+
+        /*
+         *  IPv4 Multicast
+         */
+        if (eth.getEtherType() == EthType.IPv4)
+        {
+        	U64 flowSetId = flowSetIdRegistry.generateFlowSetId();
+        	U64 cookie = makeForwardingCookie(decision, flowSetId);
+        	
+        	IPv4 ip = (IPv4) eth.getPayload();
+        	IPv4Address dstIp = ip.getDestinationAddress();
+        	
+        	DatapathId dstDpid = DpidFromMcastIP(dstIp);
+
+			Path path = routingEngineService.getMulticastPath(srcSw,
+	                srcPort,
+	                dstDpid);
+
+        	Match m = createMatchFromPacket(sw, srcPort, pi, cntx);
+
+	        if (! path.getPath().isEmpty()) {
+	            if (log.isDebugEnabled()) {
+	                log.debug("pushRouteMF inPort={} route={} " +
+	                                "destination={}:{}",
+	                        new Object[] { srcPort, path,
+	                        		dstIp,
+	                        		dstDpid});
+	                log.debug("Creating flow rules on the route, match rule: {}", m);
+	            }
+
+	            pushRouteMF(path, m, pi, sw.getId(), cookie,
+	                    cntx, requestFlowRemovedNotifn,
+	                    OFFlowModCommand.ADD, false);
+
+	            /*
+	             * Register this flowset with ingress and egress ports for link down
+	             * flow removal. This is done after we push the path as it is blocking.
+	             */
+	            for (NodePortTuple npt : path.getPath()) {
+	                flowSetIdRegistry.registerFlowSetId(npt, flowSetId);
+	            }
+			} /* else no path was found */
+        }
+        else {
+        	// TODO: Add other Multicast L3 types
+        	doFlood(sw, pi, decision, cntx);
+        }
+	}
+
+    /*
+     * Generates Dpid from Mcast IPv4Address (Experimental only)
+     */
+	private DatapathId DpidFromMcastIP(IPv4Address mcastIp) {
+		byte[] bDpid = new byte[8];
+		byte[] bIp = mcastIp.getBytes();
+		bDpid[0] = (byte) 0xFF;
+		bDpid[1] = (byte) 0xFF;
+		bDpid[2] = (byte) 0xFF;
+		bDpid[3] = (byte) 0xFF;
+		bDpid[4] = (byte) (bIp[0] | 0xF0);
+		bDpid[5] = bIp[1];
+		bDpid[6] = bIp[2];
+		bDpid[7] = bIp[3];
+		return DatapathId.of(bDpid);
+	}
+	
+	/*
+	 * Generates Mcast IPv4Address from Dpid (Experimental only)
+	 */
+	private IPv4Address McastIPFromDpid(DatapathId dpid) {
+		byte[] bIp = new byte[4];
+		byte[] bDpid = dpid.getBytes();
+		bIp[0] = (byte) (bDpid[4] & 0xEF);
+		bIp[1] = bDpid[5];
+		bIp[2] = bDpid[6];
+		bIp[3] = bDpid[7];
+		return IPv4Address.of(bIp);
+	}
+
+	/**
      * Determine the Routing Type
      *
      * @return
@@ -332,7 +444,12 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
                 log.debug("Virtual gateway pushing ARP reply message to source host");
             }
             else {
-                doFlood(sw, pi, decision, cntx);
+                if (eth.isMulticast()) {
+                    doMulticast(sw, pi, decision, cntx, gatewayInstance, false);
+                }
+                else {
+                    doFlood(sw, pi, decision, cntx);
+                }
             }
         }
         else {
@@ -611,7 +728,10 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
      * @param cntx The FloodlightContext associated with this OFPacketIn
      */
     protected void doL2Forwarding(Ethernet eth, IOFSwitch sw, OFPacketIn pi, IRoutingDecision decision, FloodlightContext cntx) {
-        if (isBroadcastOrMulticast(eth)) {
+    	if (eth.isMulticast()) {
+    		doMulticast(sw, pi, decision, cntx, null, false);
+    	}
+    	else if (eth.isBroadcast()) {
             doFlood(sw, pi, decision, cntx);
         } else {
             doL2ForwardFlow(sw, pi, decision, cntx, false);

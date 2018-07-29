@@ -20,10 +20,10 @@ public class SessionManagerParticipantsResource extends ServerResource
 		{
 	        ISessionManagerService ism = (ISessionManagerService)getContext().getAttributes().
 	                get(ISessionManagerService.class.getCanonicalName());
-	        Map<IPv4Address, Collection<? extends IDevice>> participantsMap = ism.getParticipantsMap();
-	        if (participantsMap != null)
+	        ParticipantTable participantTable = ism.getParticipantTable();
+	        if (participantTable != null)
 	        {
-	            return JsonObjectWrapper.of(participantsMap);
+	            return JsonObjectWrapper.of(participantTable);
 	        }
 	        return JsonObjectWrapper.of(ImmutableList.of());
 		}

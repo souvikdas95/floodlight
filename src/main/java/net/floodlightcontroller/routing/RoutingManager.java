@@ -175,4 +175,9 @@ public class RoutingManager implements IFloodlightModule, IRoutingService {
     public boolean isL3RoutingEnabled() {
         return enableL3RoutingService;
     }
+
+	@Override
+	public Path getMulticastPath(DatapathId src, OFPort srcPort, DatapathId dst) {
+		return tm.getCurrentTopologyInstance().getMulticastPath(src, srcPort, dst);
+	}
 }

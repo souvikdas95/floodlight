@@ -12,7 +12,7 @@ public class SessionManagerResetResource extends ServerResource
 		{
 	        ISessionManagerService ism = (ISessionManagerService)getContext().getAttributes().
 	                get(ISessionManagerService.class.getCanonicalName());
-	        ism.getParticipantsMap().clear();
+	        ism.getParticipantTable().clearTable();
 		}
 		catch(Exception ex)
 		{

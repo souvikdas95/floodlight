@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 import javax.annotation.Nonnull;
 
@@ -490,7 +491,8 @@ public class OFDPAUtils {
 	 * @param outPort, either a valid physical port number or ZERO (for drop), ALL, FLOOD, or CONTROLLER
 	 * @return true upon success; false if switch is not an OF-DPA switch
 	 */
-	public static boolean addLearningSwitchFlow(IOFSwitch sw, U64 cookie, int priority, int hardTimeout, int idleTimeout, Match match, VlanVid outVlan, OFPort outPort) {
+	public static boolean addLearningSwitchFlow(IOFSwitch sw, U64 cookie, int priority, int hardTimeout, int idleTimeout,
+			Match match, List<Map.Entry<VlanVid, OFPort>> outVlanPortTable) {
 		if (!isOFDPASwitch(sw)) {
 			log.error("Switch {} is not an OF-DPA switch. Not inserting flows.", sw.getId().toString());
 			return false;
@@ -516,8 +518,6 @@ public class OFDPAUtils {
 				return false;
 			}
 		}
-		outVlan = (outVlan == null ? VlanVid.ZERO : outVlan);
-		outPort = (outPort == null ? OFPort.ZERO : outPort);
 
 		/*
 		 * Add flow to bridging table that matches on dst MAC and outputs
@@ -526,7 +526,13 @@ public class OFDPAUtils {
 		ArrayList<OFInstruction> instructions = new ArrayList<OFInstruction>();
 		ArrayList<OFAction> actions = new ArrayList<OFAction>();
 		
-		actions.add(sw.getOFFactory().actions().group(GroupIds.createL2Interface(outPort, (outVlan.equals(VlanVid.ZERO) ? VlanVid.ofVlan(1) : outVlan))));
+		for (Map.Entry<VlanVid, OFPort> outVlanPort: outVlanPortTable) {
+			VlanVid outVlan = (VlanVid) outVlanPort.getKey();
+			outVlan = (outVlan == null ? VlanVid.ZERO : outVlan);
+			OFPort outPort = (OFPort) outVlanPort.getValue();
+			outPort = (outPort == null ? OFPort.ZERO : outPort);
+			actions.add(sw.getOFFactory().actions().group(GroupIds.createL2Interface(outPort, (outVlan.equals(VlanVid.ZERO) ? VlanVid.ofVlan(1) : outVlan))));
+		}
 		instructions.add(sw.getOFFactory().instructions().writeActions(actions));
 		instructions.add(sw.getOFFactory().instructions().gotoTable(Tables.POLICY_ACL)); /* must go here or dropped */
 

@@ -3,7 +3,6 @@ package net.floodlightcontroller.sessionmanager;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
 
 import org.projectfloodlight.openflow.protocol.OFMessage;
@@ -12,6 +11,7 @@ import org.projectfloodlight.openflow.protocol.OFType;
 import org.projectfloodlight.openflow.types.EthType;
 import org.projectfloodlight.openflow.types.IPv4Address;
 import org.projectfloodlight.openflow.types.IpProtocol;
+import org.projectfloodlight.openflow.types.OFPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,6 +29,9 @@ import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.IPv4;
 import net.floodlightcontroller.packet.UDP;
 import net.floodlightcontroller.restserver.IRestApiService;
+import net.floodlightcontroller.routing.IRoutingDecision;
+import net.floodlightcontroller.routing.RoutingDecision;
+import net.floodlightcontroller.util.OFMessageUtils;
 import net.sourceforge.jsdp.SessionDescription;
 
 public class SessionManager implements IOFMessageListener, IFloodlightModule, ISessionManagerService
@@ -38,7 +41,7 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IS
 	protected IFloodlightProviderService floodlightProvider;
 	protected IRestApiService restApiService;
 	
-	protected Map<IPv4Address, Collection<? extends IDevice>> participantsMap;
+	protected ParticipantTable participantTable;
 	
 	@Override
 	public String getName()
@@ -49,21 +52,19 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IS
 	@Override
 	public boolean isCallbackOrderingPrereq(OFType type, String name)
 	{
-		// TODO Auto-generated method stub
-		return false;
+		return (type.equals(OFType.PACKET_IN) && (name.equals("topology") || name.equals("devicemanager")));
 	}
 
 	@Override
 	public boolean isCallbackOrderingPostreq(OFType type, String name)
 	{
-		// TODO Auto-generated method stub
-		return false;
+		return (type.equals(OFType.PACKET_IN) && (name.equals("forwarding")));
 	}
 
 	@Override
-	public Map<IPv4Address, Collection<? extends IDevice>> getParticipantsMap()
+	public ParticipantTable getParticipantTable()
 	{
-		return participantsMap;
+		return participantTable;
 	}
 
 	@Override
@@ -99,7 +100,7 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IS
 		logger = LoggerFactory.getLogger(SessionManager.class);
 		floodlightProvider = (IFloodlightProviderService) context.getServiceImpl(IFloodlightProviderService.class);
 		restApiService = (IRestApiService) context.getServiceImpl(IRestApiService.class);
-		participantsMap = new HashMap<IPv4Address, Collection<? extends IDevice>>();
+		participantTable = new ParticipantTable();
 	}
 
 	@Override
@@ -124,44 +125,50 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IS
 	private Command processPacketInMessage(IOFSwitch sw, OFPacketIn msg, FloodlightContext cntx)
 	{
 		Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
+		OFPort inPort = OFMessageUtils.getInPort(msg);
 		if (eth.getEtherType() == EthType.IPv4)
 		{
 			IPv4 ip = (IPv4) eth.getPayload();
 			IPv4Address destAddress = ip.getDestinationAddress();
-			if (ip.getProtocol() == IpProtocol.UDP &&
-					destAddress != null &&
-					destAddress != IPv4Address.NONE &&
-					!destAddress.isBroadcast() &&
-					!destAddress.isMulticast() &&
-					!destAddress.isLoopback() &&
-					!destAddress.isLinkLocal() &&
-					!destAddress.isCidrMask())
+			if (destAddress == null ||
+					destAddress == IPv4Address.NONE)
 			{
-				UDP udp = (UDP) ip.getPayload();
-				try
-				{
-					IDevice dstDevice = IDeviceService.fcStore.get(cntx, IDeviceService.CONTEXT_DST_DEVICE);
-					SAP sap = new SAP(udp.getPayload());
-					SDP sdp = new SDP(sap.getPayload());
-					SessionDescription sessionDescription = sdp.getSessionDescription();
-					IPv4Address mcastAddress = IPv4Address.of(sessionDescription.getConnection()
-							.getAddress().split("/", 2)[0]);
-					if (participantsMap.containsKey(mcastAddress))
-					{
-						@SuppressWarnings("unchecked")
-						HashSet<IDevice> participantsSet = (HashSet<IDevice>) participantsMap.get(mcastAddress);
-						participantsSet.add(dstDevice);
-					}
-					else
-					{
-						HashSet<IDevice> participantsSet = new HashSet<IDevice>();
-						participantsSet.add(dstDevice);
-						participantsMap.put(mcastAddress, participantsSet);
-					}
-				}
-				catch (Exception ex)
+				return Command.CONTINUE;
+			}
+			if (destAddress.isMulticast())
+			{
+				IRoutingDecision decision = new RoutingDecision(sw.getId(), inPort, 
+                		IDeviceService.fcStore.get(cntx, IDeviceService.CONTEXT_SRC_DEVICE),
+                        IRoutingDecision.RoutingAction.MULTICAST);
+				decision.addToContext(cntx);
+			}
+			else
+			{
+				if (destAddress.isBroadcast() ||
+						destAddress.isLoopback() ||
+						destAddress.isLinkLocal() ||
+						destAddress.isCidrMask())
 				{
 					return Command.CONTINUE;
+				}
+				
+				if (ip.getProtocol() == IpProtocol.UDP)
+				{
+					UDP udp = (UDP) ip.getPayload();
+					try
+					{
+						IDevice dstDevice = IDeviceService.fcStore.get(cntx, IDeviceService.CONTEXT_DST_DEVICE);
+						SAP sap = new SAP(udp.getPayload());	// Exception if not valid Payload
+						SDP sdp = new SDP(sap.getPayload());	// Exception if not valid Payload
+						SessionDescription sessionDescription = sdp.getSessionDescription();
+						IPv4Address mcastAddress = IPv4Address.of(sessionDescription.getConnection()
+								.getAddress().split("/", 2)[0]);
+						participantTable.add(mcastAddress, dstDevice);
+					}
+					catch (Exception ex)
+					{
+						return Command.CONTINUE;
+					}
 				}
 			}
 		}
