@@ -19,14 +19,20 @@ package net.floodlightcontroller.topology;
 import com.google.common.collect.ImmutableSet;
 import net.floodlightcontroller.core.IOFSwitch;
 import net.floodlightcontroller.core.types.NodePortTuple;
+import net.floodlightcontroller.devicemanager.IDevice;
+import net.floodlightcontroller.devicemanager.SwitchPort;
 import net.floodlightcontroller.linkdiscovery.Link;
 import net.floodlightcontroller.routing.BroadcastTree;
 import net.floodlightcontroller.routing.Path;
 import net.floodlightcontroller.routing.PathId;
+import net.floodlightcontroller.sessionmanager.ParticipantTable;
 import net.floodlightcontroller.statistics.SwitchPortBandwidth;
 import net.floodlightcontroller.util.ClusterDFS;
+import net.floodlightcontroller.util.MulticastUtils;
+
 import org.projectfloodlight.openflow.protocol.OFPortDesc;
 import org.projectfloodlight.openflow.types.DatapathId;
+import org.projectfloodlight.openflow.types.IPv4Address;
 import org.projectfloodlight.openflow.types.OFPort;
 import org.projectfloodlight.openflow.types.U64;
 import org.python.google.common.collect.ImmutableList;
@@ -81,6 +87,11 @@ public class TopologyInstance {
     private Map<DatapathId, Set<NodePortTuple>> portsBroadcastPerArchipelago; /* broadcast ports in each archipelago ID */
     private Map<PathId, List<Path>>             pathcache; /* contains computed paths ordered best to worst */
 
+    /* For Multicast Use */
+    private Map<PathId, Path>					pathcacheMF; /* contains computed multicast paths */
+    private Map<DatapathId /*Archipelago Id*/,
+    	Map<DatapathId /*Multicast Dpid*/, Set<DatapathId> /*Switch Ids*/>>	multicastGroupsPerArchipelago;
+    
     protected TopologyInstance(Map<DatapathId, Set<OFPort>> portsWithLinks,
             Set<NodePortTuple> portsBlocked,
             Map<NodePortTuple, Set<Link>> linksNonBcastNonTunnel,
@@ -135,6 +146,9 @@ public class TopologyInstance {
         this.portsBroadcastPerArchipelago = new HashMap<DatapathId, Set<NodePortTuple>>();
 
         this.archipelagoFromCluster = new HashMap<Cluster, Archipelago>();
+        
+        this.pathcacheMF = new HashMap<PathId, Path>();
+        this.multicastGroupsPerArchipelago = new HashMap<DatapathId, Map<DatapathId, Set<DatapathId>>>();
     }
 
     protected void compute() {
@@ -176,12 +190,82 @@ public class TopologyInstance {
         computeBroadcastPortsPerArchipelago();
 
         /*
-         * Step 6: Optionally, print topology to log for added verbosity or when debugging.
+         * Step 6: Identify (Switch Ids for each Multicast Dpid) for each Archipelago
+         * using Session Manager Service
+         */
+        identifyMulticastGroupsPerArchipelago();
+        
+        /*
+         * Step 7: Use <Algorithm> to compute multicast trees for each archipelago
+         */
+        computeMulticastTreesPerArchipelago();
+        
+        /*
+         * Step 8: Compute multicast paths using multicast tree for each archipelago
+         */
+        computeAllMulticastPaths();
+        
+        /*
+         * Step 9: Optionally, print topology to log for added verbosity or when debugging.
          */
         printTopology();
     }
 
     /*
+     * Identify (Switch Ids for each Multicast Dpid) for each Archipelago
+     */
+	private void identifyMulticastGroupsPerArchipelago() {
+		ParticipantTable participantTable = TopologyManager.sessionManagerService.getParticipantTable();
+		for (Archipelago a: archipelagos) {
+			Map<DatapathId, Set<DatapathId>> groupSwitchMap = new HashMap<DatapathId, Set<DatapathId>>();
+			for (IPv4Address mcastAddress: participantTable.getAllGroups()) {
+				Set<DatapathId> switchIds = new HashSet<DatapathId>();
+				for (IDevice device: participantTable.getMembers(mcastAddress)) {
+					for (SwitchPort switchPort: device.getAttachmentPoints()) {
+						DatapathId switchId = switchPort.getNodeId();
+						if (!switchIds.contains(switchId) && a.isMember(switchId)) {
+							switchIds.add(switchPort.getNodeId());
+						}
+					}
+				}
+				if (!switchIds.isEmpty()) {
+					groupSwitchMap.put(MulticastUtils.DpidFromMcastIP(mcastAddress), switchIds);
+				}
+			}
+			multicastGroupsPerArchipelago.put(a.getId(), groupSwitchMap);
+		}
+	}
+
+    /*
+     * Use <Algorithm> to compute multicast trees for each archipelago
+     */
+    private void computeMulticastTreesPerArchipelago() {
+		// TODO Auto-generated method stub
+		
+	}
+	
+	/*
+     * Computes all multicast paths using multicast tree for each archipelago
+     */
+    private void computeAllMulticastPaths() {
+    	// TODO Auto-generated method stub
+    	for (DatapathId aId: multicastGroupsPerArchipelago.keySet()) {
+    		Map<DatapathId, Set<DatapathId>> groupSwitchMap = multicastGroupsPerArchipelago.get(aId);
+    		for (DatapathId mcastDpid: groupSwitchMap.keySet()) {
+    			Set<DatapathId> switchIds = groupSwitchMap.get(mcastDpid);
+    			for (DatapathId switchId: switchIds) {
+    				computeMulticastPath(switchId, mcastDpid);
+    			}
+    		}
+    	}
+    }
+
+	private void computeMulticastPath(DatapathId switchId, DatapathId mcastDpid) {
+		// TODO Auto-generated method stub
+		
+	}
+
+	/*
      * Checks if OF port is edge port
      */
     public boolean isEdge(DatapathId sw, OFPort portId) { 
@@ -1430,8 +1514,62 @@ public class TopologyInstance {
         return archipelagos.stream().map(Archipelago::getId).collect(Collectors.toSet());
     }
 
-	public Path getMulticastPath(DatapathId src, OFPort srcPort, DatapathId dst) {
-		// TODO Auto-generated method stub
-		return null;
-	}
+    /**
+     * Computes end-to-end path b/w src switch
+     * and multicast dstId
+     * @param srcId
+     * @param srcPort
+     * @return
+     */
+    public Path getMulticastPath(DatapathId srcId, OFPort srcPort,
+            DatapathId dstId) {
+        Path r = getMulticastPath(srcId, dstId);
+        
+        /* Path cannot be null, but empty b/t 2 diff DPIDs -> not found */
+        if (r.getPath().isEmpty()) {
+            return r;
+        }
+
+        /* Filter Path */
+        NodePortTuple srcNpt = new NodePortTuple(srcId, srcPort);
+        List<NodePortTuple> nptList = new ArrayList<NodePortTuple>(r.getPath());
+        for (int i = 0; i < nptList.size(); ++i) {
+        	DatapathId nId = nptList.get(i).getNodeId();
+        	if (srcNpt.getNodeId() == nId) {
+        		nptList.add(++i, srcNpt);
+        	}
+        }
+
+        PathId id = new PathId(srcId, dstId);
+        r = new Path(id, nptList);
+        return r;
+    }
+    
+    /**
+     * Get the fastest multicast path from the pathcacheMF.
+     * @param srcId
+     * @param dstId
+     * @return
+     */
+    public Path getMulticastPath(DatapathId srcId, DatapathId dstId) {
+        PathId id = new PathId(srcId, dstId);
+
+        /* Return empty route if srcId equals dstId */
+        if (srcId.equals(dstId)) {
+            return new Path(id, ImmutableList.of());
+        }
+
+        Path result = null;
+
+        try {
+        	result = pathcacheMF.get(id);
+        } catch (Exception e) {
+            log.warn("Could not find route from {} to {}. If the path exists, wait for the topology to settle, and it will be detected", srcId, dstId);
+        }
+
+        if (log.isTraceEnabled()) {
+            log.trace("getPath: {} -> {}", id, result);
+        }
+        return result == null ? new Path(id, ImmutableList.of()) : result;
+    }
 } 

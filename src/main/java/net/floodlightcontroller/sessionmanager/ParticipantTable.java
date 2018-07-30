@@ -130,6 +130,16 @@ public class ParticipantTable implements Serializable
 		return null;
 	}
 	
+	public Set<IDevice> getAllMembers()
+	{
+		return deviceToMcastMap.keySet();
+	}
+	
+	public Set<IPv4Address> getAllGroups()
+	{
+		return mcastToDeviceMap.keySet();
+	}
+	
 	public boolean isMember(IDevice device)
 	{
 		return deviceToMcastMap.containsKey(device);
