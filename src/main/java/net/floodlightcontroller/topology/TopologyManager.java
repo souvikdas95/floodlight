@@ -26,6 +26,7 @@ import net.floodlightcontroller.core.types.NodePortTuple;
 import net.floodlightcontroller.core.util.SingletonTask;
 import net.floodlightcontroller.debugcounter.IDebugCounter;
 import net.floodlightcontroller.debugcounter.IDebugCounterService;
+import net.floodlightcontroller.devicemanager.IDevice;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryListener;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
 import net.floodlightcontroller.linkdiscovery.Link;
@@ -36,6 +37,7 @@ import net.floodlightcontroller.restserver.IRestApiService;
 import net.floodlightcontroller.routing.IRoutingService;
 import net.floodlightcontroller.routing.IRoutingService.PATH_METRIC;
 import net.floodlightcontroller.routing.web.RoutingWebRoutable;
+import net.floodlightcontroller.sessionmanager.ISessionListener;
 import net.floodlightcontroller.sessionmanager.ISessionManagerService;
 import net.floodlightcontroller.statistics.IStatisticsService;
 import net.floodlightcontroller.threadpool.IThreadPoolService;
@@ -45,6 +47,7 @@ import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.types.DatapathId;
+import org.projectfloodlight.openflow.types.IPv4Address;
 import org.projectfloodlight.openflow.types.OFBufferId;
 import org.projectfloodlight.openflow.types.OFPort;
 import org.projectfloodlight.openflow.types.U64;
@@ -65,7 +68,7 @@ import java.util.concurrent.TimeUnit;
  * through the topology.
  */
 public class TopologyManager implements IFloodlightModule, ITopologyService, 
-ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
+ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener, ISessionListener {
     private static Logger log = LoggerFactory.getLogger(TopologyManager.class);
     public static final String MODULE_NAME = "topology";
 
@@ -674,6 +677,7 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
         linkDiscoveryService.addListener(this);
         floodlightProviderService.addOFMessageListener(OFType.PACKET_IN, this);
         floodlightProviderService.addHAListener(this.haListener);
+        sessionManagerService.addListener(this);
         addRestletRoutable();
     }
 
@@ -1350,4 +1354,16 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
         /* cannot invoke scheduled executor, since the update might not occur */
         return updateTopology("forced-recomputation", true);
     }
+
+	@Override
+	public void ParticipantAdded(IPv4Address mcastAddress, IDevice device) {
+		TopologyInstance ti = getCurrentInstance();
+		ti.ParticipantAdded(mcastAddress, device);
+	}
+
+	@Override
+	public void ParticipantRemoved(IPv4Address mcastAddress, IDevice device) {
+		TopologyInstance ti = getCurrentInstance();
+		ti.ParticipantRemoved(mcastAddress, device);
+	}
 }

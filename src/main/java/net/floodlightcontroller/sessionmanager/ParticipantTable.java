@@ -4,6 +4,7 @@ import java.io.Serializable;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -22,8 +23,11 @@ public class ParticipantTable implements Serializable
 	private Map<IPv4Address, Collection<? extends IDevice>> mcastToDeviceMap;
 	private transient Map<IDevice, Set<IPv4Address>> deviceToMcastMap;
 	
-	public ParticipantTable()
+	private transient SessionManager parent;
+	
+	public ParticipantTable(SessionManager sessionManager)
 	{
+		parent = sessionManager;
 		mcastToDeviceMap = new ConcurrentHashMap<IPv4Address, Collection<? extends IDevice>>();
 		deviceToMcastMap = new ConcurrentHashMap<IDevice, Set<IPv4Address>>();
 	}
@@ -42,7 +46,6 @@ public class ParticipantTable implements Serializable
 		return mcastToDeviceMap.toString();
 	}
 	
-	@SuppressWarnings("unchecked")
 	public void add(IPv4Address mcastAddress, IDevice device)
 	{
 		// Add to Member Set
@@ -50,7 +53,8 @@ public class ParticipantTable implements Serializable
 		{
 			mcastToDeviceMap.put(mcastAddress, new HashSet<IDevice>());
 		}
-		Set<IDevice> memberSet = (Set<IDevice>) mcastToDeviceMap.get(mcastAddress);
+		@SuppressWarnings("unchecked")
+		Collection<IDevice> memberSet = (Collection<IDevice>) mcastToDeviceMap.get(mcastAddress);
 		if (!memberSet.contains(device))
 		{
 			memberSet.add(device);
@@ -66,15 +70,19 @@ public class ParticipantTable implements Serializable
 		{
 			groupSet.add(mcastAddress);
 		}
+		
+		// Inform Listeners
+		for (ISessionListener sessionListener: parent.sessionListeners) {
+			sessionListener.ParticipantAdded(mcastAddress, device);
+		}
 	}
 	
-	@SuppressWarnings("unchecked")
 	public void remove(IPv4Address mcastAddress, IDevice device)
 	{
 		// Remove from Member Set
 		if (mcastToDeviceMap.containsKey(mcastAddress))
 		{
-			Set<IDevice> memberSet = (Set<IDevice>) mcastToDeviceMap.get(mcastAddress);
+			Collection<? extends IDevice> memberSet  = mcastToDeviceMap.get(mcastAddress);
 			if (memberSet.contains(device))
 			{
 				memberSet.remove(device);
@@ -97,6 +105,11 @@ public class ParticipantTable implements Serializable
 					deviceToMcastMap.remove(device);
 				}
 			}
+		}
+		
+		// Inform Listeners
+		for (ISessionListener sessionListener: parent.sessionListeners) {
+			sessionListener.ParticipantRemoved(mcastAddress, device);
 		}
 	}
 
@@ -150,12 +163,11 @@ public class ParticipantTable implements Serializable
 		return mcastToDeviceMap.containsKey(mcastAddress);
 	}
 	
-	@SuppressWarnings("unchecked")
 	public void deleteGroup(IPv4Address mcastAddress)
 	{
 		if (mcastToDeviceMap.containsKey(mcastAddress))
 		{
-			Set<IDevice> memberSet = (Set<IDevice>) mcastToDeviceMap.get(mcastAddress);
+			Collection<? extends IDevice> memberSet = mcastToDeviceMap.get(mcastAddress);
 			
 			for(IDevice device: memberSet)
 			{
@@ -179,7 +191,25 @@ public class ParticipantTable implements Serializable
 	
 	public void clearTable()
 	{
+		// Create a copy
+		Map<IPv4Address, Collection<? extends IDevice>> mcastToDeviceMapCopy = 
+				new ConcurrentHashMap<IPv4Address, Collection<? extends IDevice>>();
+		
+		// Clear
 		mcastToDeviceMap.clear();
 		deviceToMcastMap.clear();
+		
+		// Inform Listeners
+		Iterator<Map.Entry<IPv4Address, Collection<? extends IDevice>>> iterator = mcastToDeviceMapCopy.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<IPv4Address, Collection<? extends IDevice>> mcastToDeviceEntry = iterator.next();
+			IPv4Address mcastAddress = mcastToDeviceEntry.getKey();
+			Collection<? extends IDevice> memberSet = mcastToDeviceEntry.getValue();
+			for (IDevice device: memberSet) {
+				for (ISessionListener sessionListener: parent.sessionListeners) {
+					sessionListener.ParticipantRemoved(mcastAddress, device);
+				}
+			}
+		}
 	}
 }

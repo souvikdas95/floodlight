@@ -3,7 +3,10 @@ package net.floodlightcontroller.sessionmanager;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.projectfloodlight.openflow.protocol.OFMessage;
 import org.projectfloodlight.openflow.protocol.OFPacketIn;
@@ -42,6 +45,8 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IS
 	protected IRestApiService restApiService;
 	
 	protected ParticipantTable participantTable;
+	
+	protected Set<ISessionListener> sessionListeners;
 	
 	@Override
 	public String getName()
@@ -100,7 +105,8 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IS
 		logger = LoggerFactory.getLogger(SessionManager.class);
 		floodlightProvider = (IFloodlightProviderService) context.getServiceImpl(IFloodlightProviderService.class);
 		restApiService = (IRestApiService) context.getServiceImpl(IRestApiService.class);
-		participantTable = new ParticipantTable();
+		participantTable = new ParticipantTable(this);
+		sessionListeners = new HashSet<ISessionListener>();
 	}
 
 	@Override
@@ -173,5 +179,15 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IS
 			}
 		}
 		return Command.CONTINUE;
+	}
+
+	@Override
+	public void addListener(ISessionListener listener) {
+		sessionListeners.add(listener);
+	}
+
+	@Override
+	public void removeListener(ISessionListener listener) {
+		sessionListeners.remove(listener);
 	}
 }

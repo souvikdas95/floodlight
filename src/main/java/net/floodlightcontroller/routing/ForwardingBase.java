@@ -165,34 +165,41 @@ public abstract class ForwardingBase implements IOFMessageListener {
             boolean requestFlowRemovedNotification, OFFlowModCommand flowModCommand, boolean packetOutSent) {
 
 		Map<DatapathId, Map.Entry<OFPort, Set<OFPort>>> flowMap = new HashMap<DatapathId, Map.Entry<OFPort, Set<OFPort>>>();
-        List<NodePortTuple> switchPortList = route.getPath();
-
-        /*
-         * Extract flow information from path
-         */
-		for (int indx = 0; indx < switchPortList.size(); indx += 2) {
-			DatapathId swDpid1 = switchPortList.get(indx).getNodeId();
-			if (!flowMap.containsKey(swDpid1)) {
-				OFPort inPort = switchPortList.get(indx+1).getPortId();
-				Set<OFPort> outPorts  = new HashSet<OFPort>();
-				for (int i = indx; i < switchPortList.size(); i += 2 ) {
-					DatapathId swDpid2 = switchPortList.get(i).getNodeId();
-					if (swDpid1.equals(swDpid2)) {
-						outPorts.add(switchPortList.get(i).getPortId());
-					}
-				}
-				Map.Entry<OFPort, Set<OFPort>> inPortOutPortsMapEntry = 
-						new AbstractMap.SimpleEntry<OFPort, Set<OFPort>>(inPort, outPorts);
-				flowMap.put(swDpid1, inPortOutPortsMapEntry);
-			}
-		}
         
-        for (DatapathId swDpid: flowMap.keySet()) {
-            IOFSwitch sw = switchService.getSwitch(swDpid);
+		// Get route
+		List<NodePortTuple> switchPortList = route.getPath();
+        
+        // Map switches to in port and out ports
+        boolean isInput = true;
+        Map<DatapathId, Set<OFPort>> swOutPorts = new HashMap<DatapathId, Set<OFPort>>();
+        Map<DatapathId, OFPort> swInPort = new HashMap<DatapathId, OFPort>();
+        for (NodePortTuple npt: switchPortList) {
+        	DatapathId swId = npt.getNodeId();
+        	OFPort port = npt.getPortId();
+        	if (isInput) {
+        		swInPort.put(swId, port);
+        		isInput = false;
+        	}
+        	else {
+        		Set<OFPort> outPorts;
+        		if (!swOutPorts.containsKey(swId)) {
+        			outPorts = new HashSet<OFPort>();
+        			swOutPorts.put(swId, outPorts);
+        		}
+        		else {
+        			outPorts = swOutPorts.get(swId);
+        		}
+        		outPorts.add(port);
+        		isInput = true;
+        	}
+        }
+        
+        for (DatapathId swId: flowMap.keySet()) {
+            IOFSwitch sw = switchService.getSwitch(swId);
 
             if (sw == null) {
                 if (log.isWarnEnabled()) {
-                    log.warn("Unable to push route, switch at DPID {} " + "not available", swDpid);
+                    log.warn("Unable to push route, switch at DPID {} " + "not available", swId);
                 }
                 return false;
             }
@@ -224,9 +231,8 @@ public abstract class ForwardingBase implements IOFMessageListener {
             Match.Builder mb = MatchUtils.convertToVersion(match, sw.getOFFactory().getVersion());
 
             // set input and output ports on the switch
-            Map.Entry<OFPort, Set<OFPort>> inPortOutPortsMapEntry = flowMap.get(swDpid);
-            OFPort inPort = inPortOutPortsMapEntry.getKey();
-            Set<OFPort> outPorts = inPortOutPortsMapEntry.getValue();
+            OFPort inPort = swInPort.get(swId);
+            Set<OFPort> outPorts = swOutPorts.get(swId);
             if (FLOWMOD_DEFAULT_MATCH_IN_PORT) {
                 mb.setExact(MatchField.IN_PORT, inPort);
             }
