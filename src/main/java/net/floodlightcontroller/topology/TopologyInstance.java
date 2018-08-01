@@ -187,45 +187,105 @@ public class TopologyInstance {
         computeBroadcastPortsPerArchipelago();
         
         /*
-         * Step 6: Use <Algorithm> to compute multicast trees for each archipelago
+         * Step 6: Identify multicast groups using existing Participant table
          */
-        computeMulticastTreesPerArchipelago();
+        identifyMutlicastGroups();
         
         /*
-         * Step 7: Compute multicast paths using multicast tree for each archipelago
+         * Step 7: Compute multicast trees for all archipelagos
+         */
+        computeAllMulticastTrees();
+        
+        /*
+         * Step 8: Compute multicast paths using multicast tree for all archipelagos
          */
         computeAllMulticastPaths();
         
         /*
-         * Step 8: Optionally, print topology to log for added verbosity or when debugging.
+         * Step 9: Optionally, print topology to log for added verbosity or when debugging.
          */
         printTopology();
     }
 
     /*
-     * Use <Algorithm> to compute multicast trees for each archipelago
+     * Creates multicast groups using existing Participant table
      */
-    private void computeMulticastTreesPerArchipelago() {
-		// TODO
+    private void identifyMutlicastGroups() {
+		ParticipantTable participantTable = TopologyManager.sessionManagerService.getParticipantTable();
+		for (Map.Entry<IPv4Address, Collection<? extends IDevice>> entry: 
+			participantTable.getMcastToDeviceMap().entrySet()) {
+			IPv4Address mcastAddress = entry.getKey();
+			for (IDevice device: entry.getValue()) {
+				ParticipantAdded(mcastAddress, device);
+			}
+		}
+	}
+
+	/*
+     * Computes multicast trees 
+     * for all archipelagos
+     */
+    private void computeAllMulticastTrees() {
+    	for (Archipelago a: archipelagos) {
+    		computeMulticastTrees(a);
+    	}
 	}
 	
+    /*
+     * Computes multicast trees 
+     * for an archipelago
+     */
+    private void computeMulticastTrees(Archipelago a) {
+		Set<MulticastGroup> multicastGroups = a.getMulticastGroups();
+		for (MulticastGroup mg : multicastGroups) {
+			computeMulticastTrees(a, mg);
+		}
+	}
+    
+    /*
+     * Computes multicast trees 
+     * for an archipelago's multicast group
+     * TODO
+     */
+    private void computeMulticastTrees(Archipelago a, MulticastGroup mg) {
+		Set<DatapathId> swIds = mg.getSwitches();
+		
+	}
+    
 	/*
-     * Computes all multicast paths using multicast tree for each archipelago
+     * Computes all multicast paths using multicast tree 
+     * for all archipelagos
      */
     private void computeAllMulticastPaths() {
     	pathcacheMF.clear();
     	for (Archipelago a: archipelagos) {
-    		Set<MulticastGroup> multicastGroups = a.getMulticastGroups();
-    		for (MulticastGroup mg : multicastGroups) {
-				DatapathId mgId = mg.getId();
-    			Set<DatapathId> swIds = mg.getSwitches();
-    			for (DatapathId swId: swIds) {
-    				Path path = computeMulticastPath(swId, mgId);
-                    PathId pathId = new PathId(swId, mgId);
-                    pathcacheMF.put(pathId, path);
-    			}
-    		}
+    		computeMulticastPaths(a);
     	}
+    }
+    
+	/*
+     * Computes all multicast paths using multicast tree 
+     * for an archipelago
+     */
+    private void computeMulticastPaths(Archipelago a) {
+		Set<MulticastGroup> multicastGroups = a.getMulticastGroups();
+		for (MulticastGroup mg : multicastGroups) {
+			computeMulticastPaths(a, mg);
+		}
+    }
+
+    /*
+     * Computes all multicast paths using multicast tree 
+     * for an archipelago's multicast group
+     */
+    private void computeMulticastPaths(Archipelago a, MulticastGroup mg) {
+		DatapathId mgId = mg.getId();
+		Set<DatapathId> swIds = mg.getSwitches();
+		for (DatapathId swId: swIds) {
+			Path path = computeMulticastPath(swId, mgId);
+            PathId pathId = new PathId(swId, mgId);
+            pathcacheMF.put(pathId, path);
+		}
     }
 
 	private Path computeMulticastPath(DatapathId srcSwId, DatapathId mgId) {
@@ -348,30 +408,56 @@ public class TopologyInstance {
     }
 
 	public void ParticipantAdded(IPv4Address mcastAddress, IDevice device) {
-		for (Archipelago a: archipelagos) {	
-			MulticastGroup mg = a.getMulticastGroup(MulticastUtils.DpidFromMcastIP(mcastAddress));
+		DatapathId mgId = MulticastUtils.DpidFromMcastIP(mcastAddress);
+		Set<MulticastGroup> visited = new HashSet<MulticastGroup>();
+		for (SwitchPort sp: device.getAttachmentPoints()) {
+			Archipelago a = getArchipelago(sp.getNodeId());
+			MulticastGroup mg = a.getMulticastGroup(mgId);
 			if (mg != null) {
 				mg.addDevice(device);
 			}
 			else {
-				for (SwitchPort sp: device.getAttachmentPoints()) {
-					if (a == getArchipelago(sp.getNodeId())) {
-						mg = new MulticastGroup();
-						mg.addDevice(device);
-						a.addMulticastGroup(mg);
-						break;
-					}
-				}
+				mg = new MulticastGroup(a);
+				mg.addDevice(device);
+				a.addMulticastGroup(mg);
 			}
+			if (!visited.contains(mg)) {
+				visited.add(mg);
+			}
+		}
+		for (MulticastGroup mg: visited) {
+			Archipelago a = mg.getArchiepelago();
+			computeMulticastTrees(a, mg);
+			computeMulticastPaths(a, mg);
 		}
 	}
 
 	public void ParticipantRemoved(IPv4Address mcastAddress, IDevice device) {
-		for (Archipelago a: archipelagos) {	
-			MulticastGroup mg = a.getMulticastGroup(MulticastUtils.DpidFromMcastIP(mcastAddress));
+		DatapathId mgId = MulticastUtils.DpidFromMcastIP(mcastAddress);
+		Set<MulticastGroup> visited = new HashSet<MulticastGroup>();
+		for (SwitchPort sp: device.getAttachmentPoints()) {
+			Archipelago a = getArchipelago(sp.getNodeId());
+			MulticastGroup mg = a.getMulticastGroup(mgId);
 			if (mg != null) {
 				mg.removeDevice(device);
+				if (mg.getDevices().isEmpty()) {
+					/*
+					 *  Note: mg is no longer a part of its archipelago
+					 *  So, we don't need to compute trees or paths
+					 *  for it anymore. It'll die with all its constituent
+					 *  members (incl. trees) at the end of the scope
+					 */
+					a.removeMulticastGroup(mg);
+				}
+				else if (!visited.contains(mg)) {
+					visited.add(mg);
+				}
 			}
+		}
+		for (MulticastGroup mg: visited) {
+			Archipelago a = mg.getArchiepelago();
+			computeMulticastTrees(a, mg);
+			computeMulticastPaths(a, mg);
 		}
 	}
 	

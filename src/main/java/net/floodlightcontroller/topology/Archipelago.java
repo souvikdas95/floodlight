@@ -79,17 +79,23 @@ public class Archipelago {
     }
     
     void addMulticastGroup(MulticastGroup mg) {
-    	for (MulticastGroup _mg: multicastGroups) {
-    		if (_mg.getId() == mg.getId()) {
-    			multicastGroups.remove(_mg);
-    			break;
-    		}
-    	}
+    	removeMulticastGroup(mg);
     	multicastGroups.add(mg);
     }
     
     void removeMulticastGroup(MulticastGroup mg) {
-    	multicastGroups.remove(mg);
+    	if (multicastGroups.contains(mg)) {
+    		multicastGroups.remove(mg);
+    	}
+    	else {
+	    	/*
+	    	 *  TODO: Reconsider
+	    	 *  Just a precaution since underlying
+	    	 *  elements are prone to changes. So,
+	    	 *  we need to remove it securely.
+	    	 */
+	    	removeMulticastGroup(mg.getId());
+    	}
     }
     
     void removeMulticastGroup(DatapathId mgId) {
@@ -102,7 +108,16 @@ public class Archipelago {
     }
     
     boolean hasMulticastGroup(MulticastGroup mg) {
-    	return multicastGroups.contains(mg);
+    	if (multicastGroups.contains(mg)) {
+    		return true;
+    	}
+    	/*
+    	 *  TODO: Reconsider
+    	 *  Just a precaution since underlying
+    	 *  elements are prone to changes. So,
+    	 *  we need to remove it securely.
+    	 */
+		return hasMulticastGroup(mg.getId());
     }
     
     boolean hasMulticastGroup(DatapathId mgId) {

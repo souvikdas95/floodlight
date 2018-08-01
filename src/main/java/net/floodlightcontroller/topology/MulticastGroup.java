@@ -21,14 +21,18 @@ public class MulticastGroup {
 	// Multicast Group Id
 	private DatapathId id;
 	
+	// Parent Archipelago (only used for reference & hashCode)
+	private final Archipelago archipelago;
+	
 	// Set of Devices that belong to this Multicast Group
 	private Set<IDevice> devices;
 	
 	// Destiantions Rooted Multicast Trees
 	private Map<DatapathId, BroadcastTree> destinationsRootedMulticastTrees;
 	
-	public MulticastGroup() {
+	public MulticastGroup(Archipelago archipelago) {
 		id = DatapathId.NONE;
+		this.archipelago = archipelago;
 		devices = new HashSet<IDevice>();
 		destinationsRootedMulticastTrees = new HashMap<DatapathId, BroadcastTree>();
 	}
@@ -39,6 +43,10 @@ public class MulticastGroup {
 	
 	public void setId(DatapathId id) {
 		this.id = id;
+	}
+	
+	public Archipelago getArchiepelago() {
+		return archipelago;
 	}
 	
 	public void addDevice(IDevice device) {
@@ -67,6 +75,10 @@ public class MulticastGroup {
 	
 	public Set<DatapathId> getSwitches() {
 		return destinationsRootedMulticastTrees.keySet();
+	}
+	
+	public boolean hasSwitch(DatapathId swId) {
+		return destinationsRootedMulticastTrees.containsKey(swId);
 	}
 	
 	public Set<OFPort> getDevicePortsOfSwitch(DatapathId swId) {
@@ -98,6 +110,10 @@ public class MulticastGroup {
         	return false;
         }
         
+        if (!archipelago.getId().equals(that.archipelago.getId())) {
+        	return false;
+        }
+        
         if (!devices.isEmpty() && 
         		!devices.equals(that.devices)) {
     		return false;
@@ -114,6 +130,7 @@ public class MulticastGroup {
     @Override
     public int hashCode() {
         int result = id.hashCode();
+        result = 31 * result + archipelago.hashCode();
         result = 31 * result + devices.hashCode();
         result = 31 * result + destinationsRootedMulticastTrees.hashCode();
         return result;
