@@ -7,6 +7,7 @@ import net.floodlightcontroller.devicemanager.IDevice;
 import net.floodlightcontroller.routing.BroadcastTree;
 import org.projectfloodlight.openflow.types.DatapathId;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -17,12 +18,12 @@ public class Archipelago {
 	private DatapathId id; // the lowest id of the nodes
     private final Set<Cluster> clusters;
     private BroadcastTree destinationRootedFullTree;
-    private Set<MulticastGroup> multicastGroups;
+    private final Map<DatapathId, MulticastGroup> multicastGroups;
 
     public Archipelago() {
         id = DatapathId.NONE;
         clusters = new HashSet<Cluster>();
-        multicastGroups = new HashSet<MulticastGroup>();
+        multicastGroups = new HashMap<DatapathId, MulticastGroup>();
     }
     
     public DatapathId getId() {
@@ -79,67 +80,31 @@ public class Archipelago {
     }
     
     void addMulticastGroup(MulticastGroup mg) {
-    	removeMulticastGroup(mg);
-    	multicastGroups.add(mg);
+    	multicastGroups.put(mg.getId(), mg);
     }
     
     void removeMulticastGroup(MulticastGroup mg) {
-    	if (multicastGroups.contains(mg)) {
-    		multicastGroups.remove(mg);
-    	}
-    	else {
-	    	/*
-	    	 *  TODO: Reconsider
-	    	 *  Just a precaution since underlying
-	    	 *  elements are prone to changes. So,
-	    	 *  we need to remove it securely.
-	    	 */
-	    	removeMulticastGroup(mg.getId());
-    	}
+    	removeMulticastGroup(mg.getId());
     }
     
     void removeMulticastGroup(DatapathId mgId) {
-    	for (MulticastGroup mg: multicastGroups) {
-    		if (mg.getId() == mgId) {
-    			multicastGroups.remove(mg);
-    			break;
-    		}
-    	}
+    	multicastGroups.remove(mgId);
     }
     
     boolean hasMulticastGroup(MulticastGroup mg) {
-    	if (multicastGroups.contains(mg)) {
-    		return true;
-    	}
-    	/*
-    	 *  TODO: Reconsider
-    	 *  Just a precaution since underlying
-    	 *  elements are prone to changes. So,
-    	 *  we need to remove it securely.
-    	 */
-		return hasMulticastGroup(mg.getId());
+    	return hasMulticastGroup(mg.getId());
     }
     
     boolean hasMulticastGroup(DatapathId mgId) {
-    	for (MulticastGroup mg: multicastGroups) {
-    		if (mg.getId() == mgId) {
-    			return true;
-    		}
-    	}
-    	return false;
+    	return multicastGroups.containsKey(mgId);
     }
     
     MulticastGroup getMulticastGroup(DatapathId mgId) {
-    	for (MulticastGroup mg: multicastGroups) {
-    		if (mg.getId() == mgId) {
-    			return mg;
-    		}
-    	}
-    	return null;
+    	return multicastGroups.get(mgId);
     }
     
-    Set<MulticastGroup> getMulticastGroups() {
-    	return Collections.unmodifiableSet(multicastGroups);
+    Collection<MulticastGroup> getMulticastGroups() {
+    	return Collections.unmodifiableCollection(multicastGroups.values());
     }
     
     void clearMulticastGroups() {

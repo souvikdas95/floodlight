@@ -19,7 +19,7 @@ import net.floodlightcontroller.routing.BroadcastTree;
 public class MulticastGroup {
 	
 	// Multicast Group Id
-	private DatapathId id;
+	private final DatapathId mgId;
 	
 	// Parent Archipelago (only used for reference & hashCode)
 	private final Archipelago archipelago;
@@ -27,22 +27,14 @@ public class MulticastGroup {
 	// Set of Devices that belong to this Multicast Group
 	private Set<IDevice> devices;
 	
-	// Destiantions Rooted Multicast Trees
-	private Map<DatapathId, BroadcastTree> destinationsRootedMulticastTrees;
-	
-	public MulticastGroup(Archipelago archipelago) {
-		id = DatapathId.NONE;
+	public MulticastGroup(DatapathId mgId, Archipelago archipelago) {
+		this.mgId = mgId;
 		this.archipelago = archipelago;
 		devices = new HashSet<IDevice>();
-		destinationsRootedMulticastTrees = new HashMap<DatapathId, BroadcastTree>();
 	}
 	
 	public DatapathId getId() {
-		return id;
-	}
-	
-	public void setId(DatapathId id) {
-		this.id = id;
+		return mgId;
 	}
 	
 	public Archipelago getArchiepelago() {
@@ -65,20 +57,30 @@ public class MulticastGroup {
 		return Collections.unmodifiableSet(devices);
 	}
 	
-	public BroadcastTree getMulticastTree(DatapathId switchId) {
-		return destinationsRootedMulticastTrees.get(switchId);
-	}
-	
-	public void setMulticastTree(DatapathId switchId, BroadcastTree mt) {
-		destinationsRootedMulticastTrees.put(switchId, mt);
-	}
-	
 	public Set<DatapathId> getSwitches() {
-		return destinationsRootedMulticastTrees.keySet();
+		Set<DatapathId> ret = new HashSet<DatapathId>();
+		for (IDevice device: devices) {
+			for (SwitchPort sp: device.getAttachmentPoints()) {
+				DatapathId swId = sp.getNodeId();
+				if (archipelago.getSwitches().contains(swId)) {
+					ret.add(swId);
+				}
+			}
+		}
+		return ret;
 	}
 	
 	public boolean hasSwitch(DatapathId swId) {
-		return destinationsRootedMulticastTrees.containsKey(swId);
+		for (IDevice device: devices) {
+			for (SwitchPort sp: device.getAttachmentPoints()) {
+				DatapathId _swId = sp.getNodeId();
+				if (_swId.equals(swId) &&
+						archipelago.getSwitches().contains(swId)) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 	
 	public Set<OFPort> getDevicePortsOfSwitch(DatapathId swId) {
@@ -106,7 +108,7 @@ public class MulticastGroup {
 
         MulticastGroup that = (MulticastGroup) o;
 
-        if (!id.equals(that.id)) {
+        if (!mgId.equals(that.mgId)) {
         	return false;
         }
         
@@ -119,20 +121,14 @@ public class MulticastGroup {
     		return false;
         }
         
-        if (!destinationsRootedMulticastTrees.isEmpty() && 
-        		!destinationsRootedMulticastTrees.equals(that.destinationsRootedMulticastTrees)) {
-    		return false;
-        }
-        
         return true;
     }
 
     @Override
     public int hashCode() {
-        int result = id.hashCode();
+        int result = mgId.hashCode();
         result = 31 * result + archipelago.hashCode();
         result = 31 * result + devices.hashCode();
-        result = 31 * result + destinationsRootedMulticastTrees.hashCode();
         return result;
     }
 }

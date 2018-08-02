@@ -318,21 +318,20 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         	IPv4 ip = (IPv4) eth.getPayload();
         	IPv4Address dstIp = ip.getDestinationAddress();
         	
-        	DatapathId dstDpid = MulticastUtils.DpidFromMcastIP(dstIp);
+        	DatapathId mgId = MulticastUtils.DpidFromMcastIP(dstIp);
 
 			Path path = routingEngineService.getMulticastPath(srcSw,
 	                srcPort,
-	                dstDpid);
-
-        	Match m = createMatchFromPacket(sw, srcPort, pi, cntx);
+	                mgId);
 
 	        if (! path.getPath().isEmpty()) {
+	        	Match m = createMatchFromPacket(sw, srcPort, pi, cntx);
+	        	
 	            if (log.isDebugEnabled()) {
-	                log.debug("pushRouteMF inPort={} route={} " +
-	                                "destination={}:{}",
-	                        new Object[] { srcPort, path,
-	                        		dstIp,
-	                        		dstDpid});
+	                log.debug("pushRouteMF swId={} inPort={} route={} " +
+	                                "destination={}({})",
+	                        new Object[] { srcSw, srcPort, path,
+	                        		dstIp, mgId});
 	                log.debug("Creating flow rules on the route, match rule: {}", m);
 	            }
 
@@ -348,6 +347,12 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 	                flowSetIdRegistry.registerFlowSetId(npt, flowSetId);
 	            }
 			} /* else no path was found */
+	        else {
+                log.debug("Path doesn't exist for swId={} inPort={}" +
+                        "destination={}({})",
+                new Object[] { srcSw, srcPort,
+                		dstIp, mgId});
+	        }
         }
         else {
         	// TODO: Add other Multicast L3 types
