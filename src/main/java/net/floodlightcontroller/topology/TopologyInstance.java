@@ -194,7 +194,7 @@ public class TopologyInstance {
         /*
          * Step 7: Compute multicast paths using multicast tree for all archipelagos
          */
-        computeAllMulticastPaths();
+        computeMulticastPaths(null);
         
         /*
          * Step 8: Optionally, print topology to log for added verbosity or when debugging.
@@ -220,41 +220,34 @@ public class TopologyInstance {
 	}
     
 	/*
-     * Computes all multicast paths using multicast tree 
-     * for all archipelagos
+     * Computes multicast paths
+     * for a given collection of multicast groups
+     * Note: Each mg is unique in all archipelagos
      */
-    private void computeAllMulticastPaths() {
-    	pathcacheMF.clear();
-    	for (Archipelago a: archipelagos) {
-    		computeMulticastPaths(a);
+    private void computeMulticastPaths(Collection<MulticastGroup> mgs) {
+    	if (mgs == null) {
+    		mgs = new HashSet<MulticastGroup>();
+    		for (Archipelago a: archipelagos) {
+    			mgs.addAll(a.getMulticastGroups());
+    		}
     	}
-    }
-    
-	/*
-     * Computes all multicast paths using multicast tree 
-     * for an archipelago
-     */
-    private void computeMulticastPaths(Archipelago a) {
-		Collection<MulticastGroup> multicastGroups = a.getMulticastGroups();
-		for (MulticastGroup mg : multicastGroups) {
-			computeMulticastPaths(a, mg);
-		}
+    	if (!mgs.isEmpty()) {
+	    	Set<PathId> visited = new HashSet<PathId>();
+	    	for (MulticastGroup mg: mgs) {
+	    		Archipelago a = mg.getArchiepelago();
+	    		for (DatapathId swId: a.getSwitches()) {
+					PathId pathId = new PathId(swId, mg.getId());
+					Path path = computeMulticastPath(pathId);
+		            pathcacheMF.put(pathId, path);
+	    		}
+	    	}
+    	}
     }
 
     /*
-     * Computes all multicast paths using multicast tree 
-     * for an archipelago's multicast group
+     * Compute multicast path
+     * for a given mgPathId
      */
-    private void computeMulticastPaths(Archipelago a, MulticastGroup mg) {
-		DatapathId mgId = mg.getId();
-		Set<DatapathId> swIds = mg.getSwitches();
-		for (DatapathId swId: swIds) {
-			PathId pathId = new PathId(swId, mgId);
-			Path path = computeMulticastPath(pathId);
-            pathcacheMF.put(pathId, path);
-		}
-    }
-
 	private Path computeMulticastPath(PathId mgPathId) {
         DatapathId srcSwId = mgPathId.getSrc();
         DatapathId mgId = mgPathId.getDst();
@@ -263,7 +256,8 @@ public class TopologyInstance {
     	
     	Archipelago a = getArchipelago(srcSwId);
     	MulticastGroup mg = a.getMulticastGroup(mgId);
-    	Set<DatapathId> mgSwIds = mg.getSwitches();	// switches in multicast group
+    	Set<DatapathId> mgSwIds = mg.getSwitches();	// computes switches in multicast group
+    	mgSwIds.remove(srcSwId);	// no need to compute path to self (if any)
     	
     	// List of all unicast paths from srcSwId to each switch in multicast group
     	Map<DatapathId, List<Path>> mgSwPaths = new HashMap<DatapathId, List<Path>>();
@@ -274,38 +268,37 @@ public class TopologyInstance {
     	
     	// Select unicast paths for merging
     	// TODO: optimize path selection
-    	Set<Path> mgSwSelPaths = new HashSet<Path>();
+    	List<Path> mgSwSelPaths = new ArrayList<Path>();
     	for (DatapathId swId: mgSwIds) {
     		mgSwSelPaths.add(mgSwPaths.get(swId).get(0));
     	}
     	
     	// Create multicast path by merging
-    	Path result = mergePaths(mgPathId, mgSwSelPaths, true);
+    	Path result = mergePaths(mgPathId, mgSwSelPaths);
         
-        log.info("buildpath: {}", result);
+        log.info("srcSwId: {} mgId: {} path: {}", new Object[] { srcSwId, mgId, result.getPath() });
         return result == null ? new Path(mgPathId, ImmutableList.of()) : result;
 	}
 
 	/*
-	 * Merges paths (
+	 * Merges paths to form tree
 	 */
-    private Path mergePaths(PathId pathId, Set<Path> paths, boolean ordered) {
-    	Set<Map.Entry<NodePortTuple, NodePortTuple>> entrySet = 
-    			ordered ? new TreeSet<Map.Entry<NodePortTuple, NodePortTuple>>() :
-    				 new HashSet<Map.Entry<NodePortTuple, NodePortTuple>>();
+    private Path mergePaths(PathId pathId, List<Path> paths) {
+    	List<NodePortTuple> nptListMerged = new LinkedList<NodePortTuple>();
+    	Set<DatapathId> visited = new HashSet<DatapathId>();
 		for (Path path: paths) {
     		List<NodePortTuple> nptList = path.getPath();
     		for(int index = nptList.size() - 1; index > 0; index -= 2) {
-    			entrySet.add(new AbstractMap.SimpleEntry<NodePortTuple, NodePortTuple>
-    				(nptList.get(index), nptList.get(index - 1)));
+    			NodePortTuple input = nptList.get(index);
+    			if (!visited.contains(input.getNodeId())) {
+    				visited.add(input.getNodeId());
+    				NodePortTuple output = nptList.get(index - 1);
+    				nptListMerged.add(input);
+    				nptListMerged.add(output);
+    			}
     		}
     	}
-		List<NodePortTuple> nptList = new LinkedList<NodePortTuple>();
-		for (Map.Entry<NodePortTuple, NodePortTuple> entry: entrySet) {
-			nptList.add(entry.getKey());
-			nptList.add(entry.getValue());
-		}
-		return new Path(pathId, nptList);
+		return new Path(pathId, nptListMerged);
 	}
 
 	/**
@@ -323,14 +316,24 @@ public class TopologyInstance {
         if (r.getPath().isEmpty()) {
             return r;
         }
-
-        /*
-         *  Add Paths for devices per switch in multicast group
-         *  Note: If source port also belongs to device port,
-         *  then keep it. Source device match will filter it out
-         *  at the time of flow installation.
-         */
+        
         List<NodePortTuple> nptList = new ArrayList<NodePortTuple>(r.getPath());
+        
+        /*
+         * Add input paths for for source switch
+         */
+        Set<OFPort> outPorts = getSwOutPortsFromPath(srcSwId, r.getPath());
+        NodePortTuple srcNptIn = new NodePortTuple(srcSwId, srcSwPort);
+        for (OFPort outPort: outPorts) {
+        	NodePortTuple srcNptOut = new NodePortTuple(srcSwId, outPort);
+			nptList.add(srcNptIn);
+			nptList.add(srcNptOut);
+        }
+        
+        /*
+         *  Add output paths per switch for devices in multicast group
+         *  Note: If source port also belongs to device port, then keep it.
+         */
         Archipelago a = getArchipelago(srcSwId);
         MulticastGroup mg = a.getMulticastGroup(mgId);
         Set<DatapathId> swIds = mg.getSwitches();
@@ -357,12 +360,23 @@ public class TopologyInstance {
         }
 
         PathId id = new PathId(srcSwId, mgId);
-        r = new Path(id, new ArrayList<NodePortTuple>(r.getPath()));
+        r = new Path(id, new ArrayList<NodePortTuple>(nptList));
         return r;
     }
     
-    /*
-     * 
+    private Set<OFPort> getSwOutPortsFromPath(DatapathId swId, List<NodePortTuple> path) {
+    	Set<OFPort> outPorts = new HashSet<OFPort>();
+		for (int index = 0; index < path.size() - 1; index += 2) {
+			NodePortTuple npt = path.get(index + 1);
+			if (npt.getNodeId() == swId) {
+				outPorts.add(npt.getPortId());
+			}
+		}
+		return outPorts;
+	}
+
+	/*
+     * In a multicast tree, every switch has only 1 input from source
      */
     private OFPort getSwInPortFromPath(DatapathId swId, List<NodePortTuple> path) {
 		for (int index = 0; index < path.size() - 1; index += 2) {
@@ -380,21 +394,21 @@ public class TopologyInstance {
      * @param dstId
      * @return
      */
-    public Path getMulticastPath(DatapathId srcId, DatapathId dstId) {
-        PathId id = new PathId(srcId, dstId);
+    public Path getMulticastPath(DatapathId srcSwId, DatapathId mgId) {
+        PathId pathId = new PathId(srcSwId, mgId);
 
         Path result = null;
 
         try {
-        	result = pathcacheMF.get(id);
+        	result = pathcacheMF.get(pathId);
         } catch (Exception e) {
-            log.warn("Could not find route from {} to {}. If the path exists, wait for the topology to settle, and it will be detected", srcId, dstId);
+            log.warn("Could not find route from {} to {}. If the path exists, wait for the topology to settle, and it will be detected", srcSwId, mgId);
         }
 
         if (log.isTraceEnabled()) {
-            log.trace("getPath: {} -> {}", id, result);
+            log.trace("getPath: {} -> {}", pathId, result);
         }
-        return result == null ? new Path(id, ImmutableList.of()) : result;
+        return result == null ? new Path(pathId, ImmutableList.of()) : result;
     }
 
 	public void ParticipantAdded(IPv4Address mcastAddress, IDevice device) {
@@ -413,10 +427,7 @@ public class TopologyInstance {
 				visited.add(mg);
 			}
 		}
-		for (MulticastGroup mg: visited) {
-			Archipelago a = mg.getArchiepelago();
-			computeMulticastPaths(a, mg);
-		}
+		computeMulticastPaths(visited);
 	}
 
 	public void ParticipantRemoved(IPv4Address mcastAddress, IDevice device) {
@@ -443,10 +454,7 @@ public class TopologyInstance {
 				}
 			}
 		}
-		for (MulticastGroup mg: visited) {
-			Archipelago a = mg.getArchiepelago();
-			computeMulticastPaths(a, mg);
-		}
+		computeMulticastPaths(visited);
 	}
 	
 	/*

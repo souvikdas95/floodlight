@@ -608,7 +608,7 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener, ISessionLis
         restApiService = context.getServiceImpl(IRestApiService.class);
         debugCounterService = context.getServiceImpl(IDebugCounterService.class);
         statisticsService = context.getServiceImpl(IStatisticsService.class);
-        this.sessionManagerService = context.getServiceImpl(ISessionManagerService.class);
+        sessionManagerService = context.getServiceImpl(ISessionManagerService.class);
 
         switchPorts = new HashMap<DatapathId, Set<OFPort>>();
         switchPortLinks = new HashMap<NodePortTuple, Set<Link>>();

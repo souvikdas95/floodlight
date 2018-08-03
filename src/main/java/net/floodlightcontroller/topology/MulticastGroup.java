@@ -59,10 +59,11 @@ public class MulticastGroup {
 	
 	public Set<DatapathId> getSwitches() {
 		Set<DatapathId> ret = new HashSet<DatapathId>();
+		Set<DatapathId> swIdsInArchipelago = archipelago.getSwitches();
 		for (IDevice device: devices) {
 			for (SwitchPort sp: device.getAttachmentPoints()) {
 				DatapathId swId = sp.getNodeId();
-				if (archipelago.getSwitches().contains(swId)) {
+				if (swIdsInArchipelago.contains(swId)) {
 					ret.add(swId);
 				}
 			}
@@ -71,11 +72,12 @@ public class MulticastGroup {
 	}
 	
 	public boolean hasSwitch(DatapathId swId) {
+		Set<DatapathId> swIdsInArchipelago = archipelago.getSwitches();
 		for (IDevice device: devices) {
 			for (SwitchPort sp: device.getAttachmentPoints()) {
 				DatapathId _swId = sp.getNodeId();
 				if (_swId.equals(swId) &&
-						archipelago.getSwitches().contains(swId)) {
+						swIdsInArchipelago.contains(swId)) {
 					return true;
 				}
 			}

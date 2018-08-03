@@ -162,10 +162,7 @@ public abstract class ForwardingBase implements IOFMessageListener {
      */
 	public boolean pushRouteMF(Path route, Match match, OFPacketIn pi,
             DatapathId pinSwitch, U64 cookie, FloodlightContext cntx,
-            boolean requestFlowRemovedNotification, OFFlowModCommand flowModCommand, boolean packetOutSent) {
-
-		Map<DatapathId, Map.Entry<OFPort, Set<OFPort>>> flowMap = new HashMap<DatapathId, Map.Entry<OFPort, Set<OFPort>>>();
-        
+            boolean requestFlowRemovedNotification, OFFlowModCommand flowModCommand, boolean packetOutSent) {        
 		// Get route
 		List<NodePortTuple> switchPortList = route.getPath();
         
@@ -194,7 +191,7 @@ public abstract class ForwardingBase implements IOFMessageListener {
         	}
         }
         
-        for (DatapathId swId: flowMap.keySet()) {
+        for (DatapathId swId: swInPort.keySet()) {
             IOFSwitch sw = switchService.getSwitch(swId);
 
             if (sw == null) {
@@ -232,7 +229,20 @@ public abstract class ForwardingBase implements IOFMessageListener {
 
             // set input and output ports on the switch
             OFPort inPort = swInPort.get(swId);
+            if (inPort == null) {
+                if (log.isWarnEnabled()) {
+                    log.warn("Unable to push route, inPort at DPID {} " + "not available", swId);
+                }
+                return false;
+            }
             Set<OFPort> outPorts = swOutPorts.get(swId);
+            if (outPorts == null ||
+            		outPorts.isEmpty()) {
+                if (log.isWarnEnabled()) {
+                    log.warn("Unable to push route, outPorts at DPID {} " + "not available", swId);
+                }
+                return false;
+            }
             if (FLOWMOD_DEFAULT_MATCH_IN_PORT) {
                 mb.setExact(MatchField.IN_PORT, inPort);
             }
@@ -250,7 +260,7 @@ public abstract class ForwardingBase implements IOFMessageListener {
             }
 
             fmb.setMatch(mb.build())
-            .setIdleTimeout(FLOWMOD_DEFAULT_IDLE_TIMEOUT)
+            .setIdleTimeout(600)
             .setHardTimeout(FLOWMOD_DEFAULT_HARD_TIMEOUT)
             .setBufferId(OFBufferId.NO_BUFFER)
             .setCookie(cookie)

@@ -215,5 +215,5 @@ public interface IRoutingService extends IFloodlightService {
     /*
      * For Multicast use only
      */
-	Path getMulticastPath(DatapathId src, OFPort srcPort, DatapathId dst);
+	Path getMulticastPath(DatapathId srcSwId, OFPort srcSwPort, DatapathId mgId);
 }

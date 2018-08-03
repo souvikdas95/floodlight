@@ -282,9 +282,9 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 		}
     	
     	Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
-    	OFPort srcPort = OFMessageUtils.getInPort(pi);
+    	OFPort inPort = OFMessageUtils.getInPort(pi);
     	
-        DatapathId srcSw = sw.getId();
+        DatapathId curSwId = sw.getId();
         IDevice srcDevice = IDeviceService.fcStore.get(cntx, IDeviceService.CONTEXT_SRC_DEVICE);
         
         if (srcDevice == null) {
@@ -301,12 +301,15 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         }
 
         /* This packet-in is from a switch in the path before its flow was installed along the path */
-        if (!topologyService.isEdge(srcSw, srcPort)) {
-            log.debug("Packet destination is known, but packet was not received on an edge port (rx on {}/{}). Flooding packet", srcSw, srcPort);
+        if (!topologyService.isEdge(curSwId, inPort)) {
+            log.debug("Packet destination is known, but packet was not received on an edge port (rx on {}/{}). Flooding packet", curSwId, inPort);
             doFlood(sw, pi, decision, cntx);
             return;
         }
 
+        MacAddress srcMac = eth.getSourceMACAddress();
+        MacAddress dstMac = eth.getDestinationMACAddress();
+        
         /*
          *  IPv4 Multicast
          */
@@ -316,21 +319,30 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         	U64 cookie = makeForwardingCookie(decision, flowSetId);
         	
         	IPv4 ip = (IPv4) eth.getPayload();
+        	
+        	IPv4Address srcIp = ip.getSourceAddress();
         	IPv4Address dstIp = ip.getDestinationAddress();
         	
         	DatapathId mgId = MulticastUtils.DpidFromMcastIP(dstIp);
 
-			Path path = routingEngineService.getMulticastPath(srcSw,
-	                srcPort,
+			Path path = routingEngineService.getMulticastPath(curSwId,
+	                inPort,
 	                mgId);
 
 	        if (! path.getPath().isEmpty()) {
-	        	Match m = createMatchFromPacket(sw, srcPort, pi, cntx);
+	            Match.Builder mb = sw.getOFFactory().buildMatch();
+	            mb.setExact(MatchField.IN_PORT, inPort);
+	            mb.setExact(MatchField.ETH_SRC, srcMac);
+	            mb.setExact(MatchField.ETH_DST, dstMac);
+	            mb.setExact(MatchField.ETH_TYPE, EthType.IPv4);
+	            mb.setExact(MatchField.IPV4_SRC, srcIp);
+	            mb.setExact(MatchField.IPV4_DST, dstIp);
+	            Match m = mb.build();
 	        	
 	            if (log.isDebugEnabled()) {
 	                log.debug("pushRouteMF swId={} inPort={} route={} " +
 	                                "destination={}({})",
-	                        new Object[] { srcSw, srcPort, path,
+	                        new Object[] { curSwId, inPort, path.getPath(),
 	                        		dstIp, mgId});
 	                log.debug("Creating flow rules on the route, match rule: {}", m);
 	            }
@@ -348,10 +360,11 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 	            }
 			} /* else no path was found */
 	        else {
-                log.debug("Path doesn't exist for swId={} inPort={}" +
+                log.debug("Flooding because path doesn't exist for swId={} inPort={}" +
                         "destination={}({})",
-                new Object[] { srcSw, srcPort,
+                new Object[] { curSwId, inPort,
                 		dstIp, mgId});
+                doFlood(sw, pi, decision, cntx);
 	        }
         }
         else {
