@@ -8,10 +8,10 @@ import java.util.Set;
 
 import org.projectfloodlight.openflow.types.DatapathId;
 import org.projectfloodlight.openflow.types.OFPort;
+import org.python.google.common.collect.ImmutableSet;
 
 import net.floodlightcontroller.devicemanager.IDevice;
 import net.floodlightcontroller.devicemanager.SwitchPort;
-import net.floodlightcontroller.routing.BroadcastTree;
 
 /*
  * Must exist per archipelago
@@ -27,10 +27,18 @@ public class MulticastGroup {
 	// Set of Devices that belong to this Multicast Group
 	private Set<IDevice> devices;
 	
+	// Map of switches and attachment point to multicast devices
+	private Map<DatapathId, Set<OFPort>> attachmentPoints;
+	
+	// Count of duplicate attachment points
+	private Map<SwitchPort, Integer> attachmentPointCount;
+	
 	public MulticastGroup(DatapathId mgId, Archipelago archipelago) {
 		this.mgId = mgId;
 		this.archipelago = archipelago;
 		devices = new HashSet<IDevice>();
+		attachmentPoints = new HashMap<DatapathId, Set<OFPort>>();
+		attachmentPointCount = new HashMap<SwitchPort, Integer>();
 	}
 	
 	public DatapathId getId() {
@@ -42,11 +50,53 @@ public class MulticastGroup {
 	}
 	
 	public void addDevice(IDevice device) {
-		devices.add(device);
+		if (!devices.contains(device)) {
+			devices.add(device);
+			Set<DatapathId> validSw = archipelago.getSwitches();
+			for (SwitchPort sp: device.getAttachmentPoints()) {
+				Integer count = attachmentPointCount.get(sp);
+				if (count == null) {
+					DatapathId swId = sp.getNodeId();
+					if (validSw.contains(swId)) {
+						OFPort port = sp.getPortId();
+						Set<OFPort> ports = attachmentPoints.get(swId);
+						if (ports == null) {
+							ports = new HashSet<OFPort>();
+							attachmentPoints.put(swId, ports);
+						}
+						ports.add(port);
+					}
+					attachmentPointCount.put(sp, 1);
+				}
+				else {
+					attachmentPointCount.put(sp, count + 1);
+				}
+			}
+		}
 	}
 	
 	public void removeDevice(IDevice device) {
-		devices.remove(device);
+		if (devices.contains(device)) {
+			devices.remove(device);
+			for (SwitchPort sp: device.getAttachmentPoints()) {
+				Integer count = attachmentPointCount.get(sp);
+				if (count <= 1) {
+					DatapathId swId = sp.getNodeId();
+					Set<OFPort> ports = attachmentPoints.get(swId);
+					if (ports != null) {
+						OFPort port = sp.getPortId();
+						ports.remove(port);
+						if (ports.isEmpty()) {
+							attachmentPoints.remove(swId);
+						}
+					}
+					attachmentPointCount.remove(sp);
+				}
+				else {
+					attachmentPointCount.put(sp, count - 1);
+				}
+			}
+		}
 	}
 	
 	public boolean hasDevice(IDevice device) {
@@ -58,44 +108,18 @@ public class MulticastGroup {
 	}
 	
 	public Set<DatapathId> getSwitches() {
-		Set<DatapathId> ret = new HashSet<DatapathId>();
-		Set<DatapathId> swIdsInArchipelago = archipelago.getSwitches();
-		for (IDevice device: devices) {
-			for (SwitchPort sp: device.getAttachmentPoints()) {
-				DatapathId swId = sp.getNodeId();
-				if (swIdsInArchipelago.contains(swId)) {
-					ret.add(swId);
-				}
-			}
+		return attachmentPoints.keySet();
+	}
+	
+	public Set<OFPort> getAttachmentPoints(DatapathId swId) {
+		if (!attachmentPoints.containsKey(swId)) {
+			return ImmutableSet.of();
 		}
-		return ret;
+		return Collections.unmodifiableSet(attachmentPoints.get(swId));
 	}
 	
 	public boolean hasSwitch(DatapathId swId) {
-		Set<DatapathId> swIdsInArchipelago = archipelago.getSwitches();
-		for (IDevice device: devices) {
-			for (SwitchPort sp: device.getAttachmentPoints()) {
-				DatapathId _swId = sp.getNodeId();
-				if (_swId.equals(swId) &&
-						swIdsInArchipelago.contains(swId)) {
-					return true;
-				}
-			}
-		}
-		return false;
-	}
-	
-	public Set<OFPort> getDevicePortsOfSwitch(DatapathId swId) {
-		Set<OFPort> ret = new HashSet<OFPort>();
-		for (IDevice device: devices) {
-			for (SwitchPort sp: device.getAttachmentPoints()) {
-				DatapathId _swId = sp.getNodeId();
-				if (swId == _swId) {
-					ret.add(sp.getPortId());
-				}
-			}
-		}
-		return ret;
+		return attachmentPoints.containsKey(swId);
 	}
 	
     @Override
@@ -118,11 +142,6 @@ public class MulticastGroup {
         	return false;
         }
         
-        if (!devices.isEmpty() && 
-        		!devices.equals(that.devices)) {
-    		return false;
-        }
-        
         return true;
     }
 
@@ -130,7 +149,6 @@ public class MulticastGroup {
     public int hashCode() {
         int result = mgId.hashCode();
         result = 31 * result + archipelago.hashCode();
-        result = 31 * result + devices.hashCode();
         return result;
     }
 }
