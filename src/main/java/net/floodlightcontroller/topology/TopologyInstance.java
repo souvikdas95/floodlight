@@ -254,31 +254,49 @@ public class TopologyInstance {
     	Archipelago a = getArchipelago(srcSwId);
     	MulticastGroup mg = a.getMulticastGroup(mgId);
     	Set<DatapathId> mgSwIds = 
-    			new HashSet<DatapathId>(mg.getSwitches());	// Copy of 
+    			new HashSet<DatapathId>(mg.getSwitches());	// Copy
     	mgSwIds.remove(srcSwId);	// Remove source switch if in group
     	
-    	// List of all unicast paths from srcSwId to each switch in multicast group
-    	Map<DatapathId, List<Path>> mgSwPaths = new HashMap<DatapathId, List<Path>>();
-    	for (DatapathId swId: mgSwIds) {
-    		if (srcSwId != swId) {
-	    		PathId pathId = new PathId(srcSwId, swId);
-	    		mgSwPaths.put(swId, pathcache.get(pathId));
-    		}
-    	}
-    	
-    	// Select unicast paths for merging
-    	// TODO: optimize path selection
-    	List<Path> mgSwSelPaths = new ArrayList<Path>();
-    	for (DatapathId swId: mgSwIds) {
-    		if (srcSwId != swId) {
-	    		mgSwSelPaths.add(mgSwPaths.get(swId).get(0));
-    		}
-    	}
+    	// Select optimal unicast paths for merging
+    	List<Path> paths = selectPaths(srcSwId, mgSwIds);
     	
     	// Create multicast path by merging
-    	Path result = mergePaths(mgId, mgSwSelPaths, mgSwIds, true);
+    	Path result = mergePaths(mgId, paths, mgSwIds, true);
 
         return result == null ? new Path(mgPathId, ImmutableList.of()) : result;
+	}
+
+	/*
+	 * Selects optimal unicast paths that can form multicast tree from
+	 * srcSwId to all mgSwIds
+	 */
+	private List<Path> selectPaths(DatapathId srcSwId, Set<DatapathId> mgSwIds) {
+		List<Path> result = new ArrayList<Path>();
+		Set<DatapathId> unselectedSwIds = new HashSet<DatapathId>(mgSwIds);
+		Set<DatapathId> selectedSwIds = new HashSet<DatapathId>();
+		selectedSwIds.add(srcSwId);
+		while (!unselectedSwIds.isEmpty()) {
+			Path shortestPath = null;
+			for (DatapathId _srcSwId: selectedSwIds) {
+				for (DatapathId _dstSwId: unselectedSwIds) {
+					PathId pathId = new PathId(_srcSwId, _dstSwId);
+					Path path = pathcache.get(pathId).get(0);
+					if (shortestPath == null) {
+						shortestPath = path;
+					}
+					else if (path.getLatency().compareTo(shortestPath.getLatency()) <= 0) {
+						shortestPath = path;
+					}
+				}
+			}
+			unselectedSwIds.remove(shortestPath.getId().getDst());
+			List<NodePortTuple> nptList = shortestPath.getPath();
+			for (int index = 1; index < nptList.size(); index += 2) {
+				selectedSwIds.add(nptList.get(index).getNodeId());
+			}
+			result.add(shortestPath);
+		}
+		return result;
 	}
 
 	/*
