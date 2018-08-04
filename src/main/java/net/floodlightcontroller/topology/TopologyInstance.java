@@ -253,8 +253,9 @@ public class TopologyInstance {
     	
     	Archipelago a = getArchipelago(srcSwId);
     	MulticastGroup mg = a.getMulticastGroup(mgId);
-    	Set<DatapathId> mgSwIds = mg.getSwitches();	// computes switches in multicast group
-    	mgSwIds.remove(srcSwId);	// no need to compute path to self (if any)
+    	Set<DatapathId> mgSwIds = 
+    			new HashSet<DatapathId>(mg.getSwitches());	// Copy of 
+    	mgSwIds.remove(srcSwId);	// Remove source switch if in group
     	
     	// List of all unicast paths from srcSwId to each switch in multicast group
     	Map<DatapathId, List<Path>> mgSwPaths = new HashMap<DatapathId, List<Path>>();
@@ -276,8 +277,7 @@ public class TopologyInstance {
     	
     	// Create multicast path by merging
     	Path result = mergePaths(mgId, mgSwSelPaths, mgSwIds, true);
-        
-        log.info("srcSwId: {} mgId: {} path: {}", new Object[] { srcSwId, mgId, result.getPath() });
+
         return result == null ? new Path(mgPathId, ImmutableList.of()) : result;
 	}
 
@@ -286,7 +286,8 @@ public class TopologyInstance {
 	 * 
 	 * Merges unicast paths to form multicast tree path
 	 * Notes: 
-	 * 1. strict = true, means the requiredSwIds must be present and root must be persistent.
+	 * 1. strict = true, means the requiredSwIds must be present and first root must 
+	 *             be persistent across all paths.
 	 * 2. merged path is formed by reversing and merging unicast paths efficiently.
 	 * 
 	 * @param mgId
@@ -295,7 +296,8 @@ public class TopologyInstance {
      * @param strict
      * @return Path
 	 */
-    private Path mergePaths(DatapathId mgId, List<Path> paths, Set<DatapathId> requiredSwIds, boolean strict) {
+    private Path mergePaths(DatapathId mgId, List<Path> paths, 
+    		Set<DatapathId> requiredSwIds, boolean strict) {
     	// Merge Paths
     	List<NodePortTuple> nptListMerged = new LinkedList<NodePortTuple>();
     	Set<DatapathId> visitedSwIds = new HashSet<DatapathId>();
@@ -303,25 +305,45 @@ public class TopologyInstance {
 		for (Path path: paths) {
     		List<NodePortTuple> nptList = path.getPath();
     		boolean ignore = true;
-    		boolean isValid = false;
+    		if (nptList.size() % 2 != 0) {
+    			/*
+    			 * path is out of order
+    			 */
+    			return null;
+    		}
+    		if (nptList.get(0).getNodeId().equals
+    				(nptList.get(nptList.size() - 1).getNodeId())) {
+    			/*
+    			 * path ends in a loop
+    			 */
+    			return null;
+    		}
     		for(int index = nptList.size() - 1; index > 0; index -= 2) {
     			NodePortTuple input = nptList.get(index);
     			DatapathId inputSwId = input.getNodeId();
     			NodePortTuple output = nptList.get(index - 1);
     			DatapathId outputSwId = output.getNodeId();
-    			if (root != null &&
-    					(outputSwId.equals(root) || inputSwId.equals(root))) {
-    				isValid = true;
-    			}
     			if (index - 1 == 0) {
-    				if (!strict || root == null || outputSwId.equals(root)) {
-    					isValid = true;
+    				if (!ignore && !visitedSwIds.contains(outputSwId) &&
+    						root != null && !outputSwId.equals(root)) {
+    					/*
+    					 * merged path will have multiple roots
+    					 */
+    					return null;
     				}
     				root = outputSwId;
     			}
+    			else {
+    				if (strict && root != null && 
+    						(outputSwId.equals(root) || inputSwId.equals(root))) {
+    					/*
+    					 * merged path will extend and change root
+    					 */
+    					return null;
+    				}
+    			}
     			if (visitedSwIds.contains(inputSwId)) {
     				ignore = true;
-    				isValid = true;
     			}
     			else {
     				if (requiredSwIds.contains(inputSwId)) {
@@ -337,24 +359,24 @@ public class TopologyInstance {
 					nptListMerged.add(output);
     			}
     		}
-    		if (!isValid) {
-    			/*
-    			 * The current path has no link
-    			 * to merged path or out of order
-    			 */
-    			return null;
-    		}
     	}
 		if (strict) {
-			if (root != null) {
+			if (root != null && requiredSwIds.contains(root)) {
+				/*
+				 * final root is never visited. So,
+				 * if requiredSwIds has it, remove it.
+				 */
 				requiredSwIds.remove(root);
 			}
 			if (!requiredSwIds.isEmpty()) {
+				/*
+				 * All requiredSwIds are not covered
+				 */
 				return null;
 			}
 		}
 		
-		// Calculate Cost & HopCount
+		// Calculate Cost
         U64 cost = U64.ZERO;
         if (!nptListMerged.isEmpty()) { 
             for (int index = 0; index < nptListMerged.size() - 1; index += 2) {
@@ -363,8 +385,10 @@ public class TopologyInstance {
                 OFPort srcPort = nptListMerged.get(index + 1).getPortId();
                 OFPort dstPort = nptListMerged.get(index).getPortId();
                 for (Link l : links.get(nptListMerged.get(index + 1))) {
-                    if (l.getSrc().equals(src) && l.getDst().equals(dst) &&
-                            l.getSrcPort().equals(srcPort) && l.getDstPort().equals(dstPort)) {
+                    if (l.getSrc().equals(src) &&
+                    		l.getDst().equals(dst) &&
+                            l.getSrcPort().equals(srcPort) &&
+                            l.getDstPort().equals(dstPort)) {
                         cost = cost.add(l.getLatency());
                     }
                 }
@@ -374,26 +398,26 @@ public class TopologyInstance {
         // Prepare result
 		PathId pathId = new PathId(root, mgId);
 		Path result = new Path(pathId, nptListMerged);
-        result.setHopCount(nptListMerged.size()/2);
+        result.setHopCount(nptListMerged.size() / 2);
         result.setLatency(cost);
         
         return result;
 	}
 
 	/**
-     * Computes end-to-end path b/w src switch
-     * and multicast dstId
+     * Computes end-to-end path b/w srcSwId
+     * at srcwPort and mgId
      * @param srcSwId
      * @param srcPort
+     * @param mgId
      * @return
      */
-    public Path getMulticastPath(DatapathId srcSwId, OFPort srcSwPort,
-            DatapathId mgId) {
-        Path r = getMulticastPath(srcSwId, mgId);
-        
-        /* Path cannot be null, but empty b/t 2 diff DPIDs -> not found */
-        if (r.getPath().isEmpty()) {
-            return r;
+    public Path getMulticastPath(DatapathId srcSwId, OFPort srcSwPort, DatapathId mgId) {
+    	PathId pathId = new PathId(srcSwId, mgId);
+    	Path r = pathcacheMF.get(pathId);
+
+        if (r == null) {
+            return new Path(pathId, ImmutableList.of());
         }
         
         List<NodePortTuple> nptList = new ArrayList<NodePortTuple>(r.getPath());
@@ -467,29 +491,6 @@ public class TopologyInstance {
 		}
 		return null;
 	}
-
-	/**
-     * Get the fastest multicast path from the pathcacheMF.
-     * @param srcId
-     * @param dstId
-     * @return
-     */
-    public Path getMulticastPath(DatapathId srcSwId, DatapathId mgId) {
-        PathId pathId = new PathId(srcSwId, mgId);
-
-        Path result = null;
-
-        try {
-        	result = pathcacheMF.get(pathId);
-        } catch (Exception e) {
-            log.warn("Could not find route from {} to {}. If the path exists, wait for the topology to settle, and it will be detected", srcSwId, mgId);
-        }
-
-        if (log.isTraceEnabled()) {
-            log.trace("getPath: {} -> {}", pathId, result);
-        }
-        return result == null ? new Path(pathId, ImmutableList.of()) : result;
-    }
 
 	public void ParticipantAdded(IPv4Address mcastAddress, IDevice device) {
 		DatapathId mgId = MulticastUtils.DpidFromMcastIP(mcastAddress);
