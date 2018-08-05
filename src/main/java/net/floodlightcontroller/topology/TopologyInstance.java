@@ -71,6 +71,7 @@ public class TopologyInstance {
     private Map<NodePortTuple, Set<Link>>   linksNonBcastNonTunnel; /* only non-broadcast and non-tunnel links */
     private Map<NodePortTuple, Set<Link>>   linksExternal; /* BDDP links b/t clusters */
     private Set<Link>                       linksNonExternalInterCluster;
+    private Map<Link, Integer>				gLinkCost; /* cost of all links */
 
     /* Blocked */
     private Set<NodePortTuple>  portsBlocked;
@@ -127,6 +128,7 @@ public class TopologyInstance {
         }
 
         this.linksNonExternalInterCluster = new HashSet<Link>();
+        this.gLinkCost = new HashMap<Link, Integer>();
         this.archipelagos = new ArrayList<Archipelago>();
 
         this.portsWithMoreThanTwoLinks = new HashSet<NodePortTuple>(portsWithMoreThanTwoLinks);
@@ -232,7 +234,7 @@ public class TopologyInstance {
     		}
     	}
     	if (!mgs.isEmpty()) {
-	    	for (MulticastGroup mg: mgs) {
+    		for (MulticastGroup mg: mgs) {
 	    		Archipelago a = mg.getArchiepelago();
 	    		for (DatapathId swId: a.getSwitches()) {
 					PathId pathId = new PathId(swId, mg.getId());
@@ -250,7 +252,7 @@ public class TopologyInstance {
 	private Path computeMulticastPath(PathId mgPathId) {
         DatapathId srcSwId = mgPathId.getSrc();
         DatapathId mgId = mgPathId.getDst();
-    	
+        
     	Archipelago a = getArchipelago(srcSwId);
     	MulticastGroup mg = a.getMulticastGroup(mgId);
     	Set<DatapathId> mgSwIds = 
@@ -260,41 +262,71 @@ public class TopologyInstance {
     	// Select optimal unicast paths for merging
     	List<Path> paths = selectPaths(srcSwId, mgSwIds);
     	
+        // Update global link costs everytime before paths are merged
+        updateLinkCostMap();
+        
+		Map<Link, Integer> linkCost = gLinkCost;
+    	
     	// Create multicast path by merging
-    	Path result = mergePaths(mgId, paths, mgSwIds, true);
+    	Path result = mergePaths(mgId, paths, linkCost, mgSwIds, true);
 
         return result == null ? new Path(mgPathId, ImmutableList.of()) : result;
 	}
 
 	/*
+	 * @author Souvik Das (souvikdas95@yahoo.co.in)
+	 * 
 	 * Selects optimal unicast paths that can form multicast tree from
-	 * srcSwId to all mgSwIds
+	 * srcSwId to all mgSwIds.
+	 * 
+	 * @param srcSwId
+	 * @param mgSwIds
+	 * @return List<Path>
 	 */
 	private List<Path> selectPaths(DatapathId srcSwId, Set<DatapathId> mgSwIds) {
 		List<Path> result = new ArrayList<Path>();
 		Set<DatapathId> unselectedSwIds = new HashSet<DatapathId>(mgSwIds);
 		Set<DatapathId> selectedSwIds = new HashSet<DatapathId>();
-		selectedSwIds.add(srcSwId);
+		Path shortestPath = null;
+		
+		selectedSwIds.add(srcSwId);	// add root
+		
 		while (!unselectedSwIds.isEmpty()) {
-			Path shortestPath = null;
+			if (shortestPath != null) {
+				List<NodePortTuple> nptList = shortestPath.getPath();
+				for (int index = 1; index < nptList.size(); index += 2) {
+					selectedSwIds.add(nptList.get(index).getNodeId());
+				}
+			}
+			
+			// Find the next path to merge
+			shortestPath = null;
 			for (DatapathId _srcSwId: selectedSwIds) {
 				for (DatapathId _dstSwId: unselectedSwIds) {
 					PathId pathId = new PathId(_srcSwId, _dstSwId);
-					Path path = pathcache.get(pathId).get(0);
+					/*
+					 * Note we don't need to do any extra caching as
+					 * time complexity to get a path is already O(1)
+					 */
+					List<Path> paths = pathcache.get(pathId);
+					if (paths == null || paths.isEmpty()) {
+						continue;
+					}
+					Path path = pathcache.get(pathId).get(0);	// Shortest path
 					if (shortestPath == null) {
 						shortestPath = path;
 					}
-					else if (path.getLatency().compareTo(shortestPath.getLatency()) <= 0) {
+					else if (path.getCost() < shortestPath.getCost()) {
 						shortestPath = path;
 					}
 				}
 			}
-			unselectedSwIds.remove(shortestPath.getId().getDst());
-			List<NodePortTuple> nptList = shortestPath.getPath();
-			for (int index = 1; index < nptList.size(); index += 2) {
-				selectedSwIds.add(nptList.get(index).getNodeId());
-			}
+			
+			// Add to result
 			result.add(shortestPath);
+			
+			// Remove destination from unselectedSwIds
+			unselectedSwIds.remove(shortestPath.getId().getDst());
 		}
 		return result;
 	}
@@ -314,7 +346,7 @@ public class TopologyInstance {
      * @param strict
      * @return Path
 	 */
-    private Path mergePaths(DatapathId mgId, List<Path> paths, 
+    private Path mergePaths(DatapathId mgId, List<Path> paths, Map<Link, Integer> linkCost,
     		Set<DatapathId> requiredSwIds, boolean strict) {
     	// Merge Paths
     	List<NodePortTuple> nptListMerged = new LinkedList<NodePortTuple>();
@@ -394,8 +426,9 @@ public class TopologyInstance {
 			}
 		}
 		
-		// Calculate Cost
-        U64 cost = U64.ZERO;
+		// Calculate Cost and Latency
+        U64 latency = U64.ZERO;
+        Integer cost = 0;
         if (!nptListMerged.isEmpty()) { 
             for (int index = 0; index < nptListMerged.size() - 1; index += 2) {
                 DatapathId src = nptListMerged.get(index + 1).getNodeId();
@@ -407,7 +440,15 @@ public class TopologyInstance {
                     		l.getDst().equals(dst) &&
                             l.getSrcPort().equals(srcPort) &&
                             l.getDstPort().equals(dstPort)) {
-                        cost = cost.add(l.getLatency());
+                        Integer _cost = (linkCost == null) ? null : linkCost.get(l);
+                        if (_cost == null) {
+                        	_cost = 1;
+                        }
+                        cost += _cost;
+                        
+                        // Add Latency
+                        U64 _latency = l.getLatency();
+                    	latency = latency.add(_latency);
                     }
                 }
             }
@@ -417,7 +458,8 @@ public class TopologyInstance {
 		PathId pathId = new PathId(root, mgId);
 		Path result = new Path(pathId, nptListMerged);
         result.setHopCount(nptListMerged.size() / 2);
-        result.setLatency(cost);
+        result.setCost(cost);
+        result.setLatency(latency);
         
         return result;
 	}
@@ -1017,10 +1059,17 @@ public class TopologyInstance {
     }
 
     /*
-     * Creates a map of links and the cost associated with each link
+     * Updates the map of links and the cost associated with each link
      */
-    public Map<Link,Integer> initLinkCostMap() {
-        Map<Link, Integer> linkCost = new HashMap<Link, Integer>();
+    public Map<Link, Integer> getLinkCostMap() {
+    	return this.gLinkCost;
+    }
+    
+    /*
+     * Updates the map of links and the cost associated with each link
+     */
+    public void updateLinkCostMap() {
+        gLinkCost.clear();
         int tunnel_weight = portsWithLinks.size() + 1;
 
         switch (TopologyManager.getPathMetricInternal()){
@@ -1034,10 +1083,10 @@ public class TopologyInstance {
                     if (link == null) {
                         continue;
                     }
-                    linkCost.put(link, tunnel_weight);
+                    gLinkCost.put(link, tunnel_weight);
                 }
             }
-            return linkCost;
+            return;
 
         case HOPCOUNT:
             log.debug("Using hop count w/o tunnel bias for metrics");
@@ -1049,10 +1098,10 @@ public class TopologyInstance {
                     if (link == null) {
                         continue;
                     }
-                    linkCost.put(link,1);
+                    gLinkCost.put(link,1);
                 }
             }
-            return linkCost;
+            return;
 
         case LATENCY:
             log.debug("Using latency for path metrics");
@@ -1066,13 +1115,13 @@ public class TopologyInstance {
                     }
                     if ((int)link.getLatency().getValue() < 0 || 
                             (int)link.getLatency().getValue() > MAX_LINK_WEIGHT) {
-                        linkCost.put(link, MAX_LINK_WEIGHT);
+                    	gLinkCost.put(link, MAX_LINK_WEIGHT);
                     } else {
-                        linkCost.put(link,(int)link.getLatency().getValue());
+                    	gLinkCost.put(link,(int)link.getLatency().getValue());
                     }
                 }
             }
-            return linkCost;
+            return;
 
         case LINK_SPEED:
             TopologyManager.statisticsService.collectStatistics(true);
@@ -1096,13 +1145,13 @@ public class TopologyInstance {
 
                     if ((rawLinkSpeed / 10^6) / 8 > 1) {
                         int linkSpeedMBps = (int)(rawLinkSpeed / 10^6) / 8;
-                        linkCost.put(link, (1/linkSpeedMBps)*1000);
+                        gLinkCost.put(link, (1/linkSpeedMBps)*1000);
                     } else {
-                        linkCost.put(link, MAX_LINK_WEIGHT);
+                    	gLinkCost.put(link, MAX_LINK_WEIGHT);
                     }
                 }
             }
-            return linkCost;
+            return;
             
         case UTILIZATION:
             TopologyManager.statisticsService.collectStatistics(true);
@@ -1122,13 +1171,13 @@ public class TopologyInstance {
 
                     if ((bpsTx / 10^6) / 8 > 1) {
                         int cost = (int) (bpsTx / 10^6) / 8;
-                        linkCost.put(link, cost);
+                        gLinkCost.put(link, cost);
                     } else {
-                        linkCost.put(link, MAX_LINK_WEIGHT);
+                    	gLinkCost.put(link, MAX_LINK_WEIGHT);
                     }
                 }
             }
-            return linkCost;
+            return;
 
         default:
             log.debug("Invalid Selection: Using Default Hop Count with Tunnel Bias for Metrics");
@@ -1136,10 +1185,10 @@ public class TopologyInstance {
                 if (links.get(npt) == null) continue;
                 for (Link link : links.get(npt)) {
                     if (link == null) continue;
-                    linkCost.put(link, tunnel_weight);
+                    gLinkCost.put(link, tunnel_weight);
                 }
             }
-            return linkCost;
+            return;
         }
     }
 
@@ -1322,8 +1371,9 @@ public class TopologyInstance {
         return null;
     }
 
-    public void setPathCosts(Path p) {
-        U64 cost = U64.ZERO;
+    public void setPathCosts(Path p, Map<Link, Integer> linkCost) {
+        U64 latency = U64.ZERO;
+    	Integer cost = 0;
 
         // Set number of hops. Assuming the list of NPTs is always even.
         p.setHopCount(p.getPath().size()/2);
@@ -1337,12 +1387,22 @@ public class TopologyInstance {
                 if (l.getSrc().equals(src) && l.getDst().equals(dst) &&
                         l.getSrcPort().equals(srcPort) && l.getDstPort().equals(dstPort)) {
                     log.debug("Matching link found: {}", l);
-                    cost = cost.add(l.getLatency());
+                    // Add Cost
+                    Integer _cost = (linkCost == null) ? null : linkCost.get(l);
+                    if (_cost == null) {
+                    	_cost = 1;
+                    }
+                    cost += _cost;
+                    
+                    // Add Latency
+                    U64 _latency = l.getLatency();
+                	latency = latency.add(_latency);
                 }
             }
         }
 
-        p.setLatency(cost);
+        p.setCost(cost);
+        p.setLatency(latency);
         log.debug("Total cost is {}", cost);
         log.debug(p.toString());
 
@@ -1354,9 +1414,12 @@ public class TopologyInstance {
         log.debug("Asking for paths from {} to {}", src, dst);
         log.debug("Asking for {} paths", K);
 
-        // Find link costs
-        Map<Link, Integer> linkCost = initLinkCostMap();
+        // Update global link costs everytime before yens is called
+        updateLinkCostMap();
 
+        // Find link costs
+        Map<Link, Integer> linkCost = gLinkCost;
+        
         Map<DatapathId, Set<Link>> linkDpidMap = buildLinkDpidMap(switches, portsWithLinks, links);
 
         Map<DatapathId, Set<Link>> copyOfLinkDpidMap = new HashMap<DatapathId, Set<Link>>(linkDpidMap);
@@ -1391,7 +1454,7 @@ public class TopologyInstance {
         Path newroute = buildPath(new PathId(src, dst), bt); /* guaranteed to be in same tree */
 
         if (newroute != null && !newroute.getPath().isEmpty()) { /* should never be null, but might be empty */
-            setPathCosts(newroute);
+            setPathCosts(newroute, linkCost);
             A.add(newroute);
             log.debug("Found shortest path in Yens {}", newroute);
         }
@@ -1451,7 +1514,7 @@ public class TopologyInstance {
                 totalNpt.addAll(rootPath.getPath());
                 totalNpt.addAll(spurPath.getPath());
                 Path totalPath = new Path(new PathId(src, dst), totalNpt);
-                setPathCosts(totalPath);
+                setPathCosts(totalPath, linkCost);
 
                 log.trace("Spur Node: {}", spurNode);
                 log.trace("Root Path: {}", rootPath);

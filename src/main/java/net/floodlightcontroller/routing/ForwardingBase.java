@@ -260,7 +260,7 @@ public abstract class ForwardingBase implements IOFMessageListener {
             }
 
             fmb.setMatch(mb.build())
-            .setIdleTimeout(600)
+            .setIdleTimeout(FLOWMOD_DEFAULT_IDLE_TIMEOUT)
             .setHardTimeout(FLOWMOD_DEFAULT_HARD_TIMEOUT)
             .setBufferId(OFBufferId.NO_BUFFER)
             .setCookie(cookie)

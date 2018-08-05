@@ -482,8 +482,15 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener, ISessionLis
     ////////////////////////////////////////////////////////////////////////
 
     public Map<Link, Integer> getLinkCostMap() {
-        TopologyInstance ti = getCurrentInstance();
-        return ti.initLinkCostMap();
+    	Map<Link, Integer> gLinkCost;
+    	Map<Link, Integer> linkCost =
+                new HashMap<Link, Integer>();
+
+    	gLinkCost = getCurrentInstance().getLinkCostMap();
+        if (gLinkCost != null)
+        	linkCost.putAll(gLinkCost);
+
+        return linkCost;
     }
 
     // ******************
