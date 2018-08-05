@@ -46,8 +46,10 @@ public class ParticipantTable implements Serializable
 		return mcastToDeviceMap.toString();
 	}
 	
-	public void add(IPv4Address mcastAddress, IDevice device)
+	public void add(IPv4Address mcastAddress, IDevice device, boolean notify)
 	{
+		boolean toNotify = false;
+		
 		// Add to Member Set
 		if (!mcastToDeviceMap.containsKey(mcastAddress))
 		{
@@ -58,6 +60,7 @@ public class ParticipantTable implements Serializable
 		if (!memberSet.contains(device))
 		{
 			memberSet.add(device);
+			toNotify = true;
 		}
 		
 		// Add to Group Set
@@ -69,16 +72,21 @@ public class ParticipantTable implements Serializable
 		if (!groupSet.contains(mcastAddress))
 		{
 			groupSet.add(mcastAddress);
+			toNotify = true;
 		}
 		
-		// Inform Listeners
-		for (ISessionListener sessionListener: parent.sessionListeners) {
-			sessionListener.ParticipantAdded(mcastAddress, device);
+		if (toNotify && notify) {
+			// Inform Listeners
+			for (ISessionListener sessionListener: parent.sessionListeners) {
+				sessionListener.ParticipantAdded(mcastAddress, device);
+			}
 		}
 	}
 	
-	public void remove(IPv4Address mcastAddress, IDevice device)
+	public void remove(IPv4Address mcastAddress, IDevice device, boolean notify)
 	{
+		boolean toNotify = false;
+		
 		// Remove from Member Set
 		if (mcastToDeviceMap.containsKey(mcastAddress))
 		{
@@ -90,6 +98,7 @@ public class ParticipantTable implements Serializable
 				{
 					mcastToDeviceMap.remove(mcastAddress);
 				}
+				toNotify = true;
 			}
 		}
 		
@@ -104,12 +113,15 @@ public class ParticipantTable implements Serializable
 				{
 					deviceToMcastMap.remove(device);
 				}
+				toNotify = true;
 			}
 		}
 		
-		// Inform Listeners
-		for (ISessionListener sessionListener: parent.sessionListeners) {
-			sessionListener.ParticipantRemoved(mcastAddress, device);
+		if (toNotify && notify) {
+			// Inform Listeners
+			for (ISessionListener sessionListener: parent.sessionListeners) {
+				sessionListener.ParticipantRemoved(mcastAddress, device);
+			}
 		}
 	}
 
@@ -163,7 +175,7 @@ public class ParticipantTable implements Serializable
 		return mcastToDeviceMap.containsKey(mcastAddress);
 	}
 	
-	public void deleteGroup(IPv4Address mcastAddress)
+	public void deleteGroup(IPv4Address mcastAddress, boolean notify)
 	{
 		if (mcastToDeviceMap.containsKey(mcastAddress))
 		{
@@ -171,12 +183,12 @@ public class ParticipantTable implements Serializable
 			
 			for(IDevice device: memberSet)
 			{
-				remove(mcastAddress, device);
+				remove(mcastAddress, device, notify);
 			}
 		}
 	}
 	
-	public void deleteMember(IDevice device)
+	public void deleteMember(IDevice device, boolean notify)
 	{
 		if (deviceToMcastMap.containsKey(device))
 		{
@@ -184,30 +196,33 @@ public class ParticipantTable implements Serializable
 			
 			for(IPv4Address mcastAddress: groupSet)
 			{
-				remove(mcastAddress, device);
+				remove(mcastAddress, device, notify);
 			}
 		}
 	}
 	
-	public void clearTable()
+	public void clearTable(boolean notify)
 	{
 		// Create a copy
-		Map<IPv4Address, Collection<? extends IDevice>> mcastToDeviceMapCopy = 
-				new ConcurrentHashMap<IPv4Address, Collection<? extends IDevice>>();
+		Map<IPv4Address, Collection<? extends IDevice>> mcastToDeviceMapCopy = null;
+		if (notify) {
+			mcastToDeviceMapCopy = new ConcurrentHashMap<IPv4Address, Collection<? extends IDevice>>();
+		}
 		
 		// Clear
 		mcastToDeviceMap.clear();
 		deviceToMcastMap.clear();
 		
 		// Inform Listeners
-		Iterator<Map.Entry<IPv4Address, Collection<? extends IDevice>>> iterator = mcastToDeviceMapCopy.entrySet().iterator();
-		while (iterator.hasNext()) {
-			Map.Entry<IPv4Address, Collection<? extends IDevice>> mcastToDeviceEntry = iterator.next();
-			IPv4Address mcastAddress = mcastToDeviceEntry.getKey();
-			Collection<? extends IDevice> memberSet = mcastToDeviceEntry.getValue();
-			for (IDevice device: memberSet) {
-				for (ISessionListener sessionListener: parent.sessionListeners) {
-					sessionListener.ParticipantRemoved(mcastAddress, device);
+		if (notify && mcastToDeviceMapCopy != null) {
+			Set<Map.Entry<IPv4Address, Collection<? extends IDevice>>> entries = mcastToDeviceMapCopy.entrySet();
+			for (Map.Entry<IPv4Address, Collection<? extends IDevice>> entry: entries) {
+				IPv4Address mcastAddress = entry.getKey();
+				Collection<? extends IDevice> memberSet = entry.getValue();
+				for (IDevice device: memberSet) {
+					for (ISessionListener sessionListener: parent.sessionListeners) {
+						sessionListener.ParticipantRemoved(mcastAddress, device);
+					}
 				}
 			}
 		}

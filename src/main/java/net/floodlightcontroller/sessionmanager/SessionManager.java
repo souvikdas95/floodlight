@@ -169,7 +169,7 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IS
 						SessionDescription sessionDescription = sdp.getSessionDescription();
 						IPv4Address mcastAddress = IPv4Address.of(sessionDescription.getConnection()
 								.getAddress().split("/", 2)[0]);
-						participantTable.add(mcastAddress, dstDevice);
+						participantTable.add(mcastAddress, dstDevice, true);
 					}
 					catch (Exception ex)
 					{
