@@ -286,48 +286,70 @@ public class TopologyInstance {
 	private List<Path> selectPaths(DatapathId srcSwId, Set<DatapathId> mgSwIds) {
 		List<Path> result = new ArrayList<Path>();
 		Set<DatapathId> unselectedSwIds = new HashSet<DatapathId>(mgSwIds);
-		Set<DatapathId> selectedSwIds = new HashSet<DatapathId>();
+		List<DatapathId> selectedSwIds = new ArrayList<DatapathId>();
+		Map<DatapathId, Path> shortestPathSoFarMap = new HashMap<DatapathId, Path>();
 		Path shortestPath = null;
 		
-		selectedSwIds.add(srcSwId);	// add root
+		// Add tree root for first run
+		selectedSwIds.add(srcSwId);
 		
-		while (!unselectedSwIds.isEmpty()) {
+		do {
+			// Add sources into selelectedSwIds from shortestPath
+			// except path root as it is already taken into account
 			if (shortestPath != null) {
+				selectedSwIds = new ArrayList<DatapathId>();
 				List<NodePortTuple> nptList = shortestPath.getPath();
 				for (int index = 1; index < nptList.size(); index += 2) {
 					selectedSwIds.add(nptList.get(index).getNodeId());
 				}
 			}
 			
-			// Find the next path to merge
-			shortestPath = null;
-			for (DatapathId _srcSwId: selectedSwIds) {
-				for (DatapathId _dstSwId: unselectedSwIds) {
+			// Update shortestPathSoFarMap for every destination in unselectedSwIds
+			for (DatapathId _dstSwId: unselectedSwIds) {
+				for (DatapathId _srcSwId: selectedSwIds) {
 					PathId pathId = new PathId(_srcSwId, _dstSwId);
-					/*
-					 * Note we don't need to do any extra caching as
-					 * time complexity to get a path is already O(1)
-					 */
+					
+					// Get path (shortest) from _srcSwId to _dstSwId (O(1))
 					List<Path> paths = pathcache.get(pathId);
 					if (paths == null || paths.isEmpty()) {
 						continue;
 					}
-					Path path = pathcache.get(pathId).get(0);	// Shortest path
-					if (shortestPath == null) {
-						shortestPath = path;
-					}
-					else if (path.getCost() < shortestPath.getCost()) {
-						shortestPath = path;
+					Path path = paths.get(0);
+					
+					// Get shortestPathSoFar for _dstSwId (O(1))
+					Path shortestPathSoFar = shortestPathSoFarMap.get(_dstSwId);
+					
+					// Compare and update (O(1))
+					if (shortestPathSoFar == null /*first run*/||
+							path.getCost() < shortestPathSoFar.getCost()) {
+						shortestPathSoFarMap.put(_dstSwId, path);
 					}
 				}
 			}
 			
-			// Add to result
+			// Exit if shortestPathSoFarMap is empty
+			// i.e. after first run as root has no path to destinations
+			if (shortestPathSoFarMap.isEmpty()) {
+				break;
+			}
+			
+			// Select shortestPath from shortestPathSoFarMap
+			shortestPath = null;
+			for (Path path: shortestPathSoFarMap.values()) {
+				if (shortestPath == null ||
+						path.getCost() < shortestPath.getCost()) {
+					shortestPath = path;
+				}
+			}
+			
+			// Add shortestPath to result
 			result.add(shortestPath);
 			
-			// Remove destination from unselectedSwIds
+			// Remove destination from unselectedSwIds and shortestPathSoFarMap (O(1))
 			unselectedSwIds.remove(shortestPath.getId().getDst());
-		}
+			shortestPathSoFarMap.remove(shortestPath.getId().getDst());
+		} while (shortestPathSoFarMap.size() > 0);
+		
 		return result;
 	}
 
