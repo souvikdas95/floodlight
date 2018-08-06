@@ -194,7 +194,7 @@ public class TopologyInstance {
         identifyMutlicastGroups();
         
         /*
-         * Step 7: Compute multicast paths using multicast tree for all archipelagos
+         * Step 7: Compute all multicast paths for all archipelagos
          */
         computeMulticastPaths(null);
         
@@ -254,21 +254,47 @@ public class TopologyInstance {
         DatapathId mgId = mgPathId.getDst();
         
     	Archipelago a = getArchipelago(srcSwId);
+    	if (a == null) {
+			log.info(String.format("computeMulticastPath: Root: {s%d}, mgId: {s%d},"
+					+ "No suitable archipelago found}",
+					srcSwId.getLong(), mgId));
+    		return new Path(mgPathId, ImmutableList.of());
+    	}
+    	
     	MulticastGroup mg = a.getMulticastGroup(mgId);
-    	Set<DatapathId> mgSwIds = 
-    			new HashSet<DatapathId>(mg.getSwitches());	// Copy
-    	mgSwIds.remove(srcSwId);	// Remove source switch if in group
+    	if (mg == null) {
+			log.info(String.format("computeMulticastPath: Root: {s%d}, mgId: {s%d},"
+					+ "No suitable multicast group found",
+					srcSwId.getLong(), mgId));
+    		return new Path(mgPathId, ImmutableList.of());
+    	}
+    	
+    	Set<DatapathId> mgSwIds = mg.getSwitches();
+    	if (mgSwIds.isEmpty() ||
+    			(mgSwIds.size() == 1 && mgSwIds.contains(srcSwId))) {
+			log.info(String.format("computeMulticastPath: Root: {s%d}, mgId: {s%d},"
+					+ "Multicast group is either empty or needs no path",
+					srcSwId.getLong(), mgId));
+    		return new Path(mgPathId, ImmutableList.of());
+    	}
     	
     	// Select optimal unicast paths for merging
     	List<Path> paths = selectPaths(srcSwId, mgSwIds);
-    	
+		log.info(String.format("computeMulticastPath: Root: {s%d}, mgId: {%s}, "
+				+ "mgSwIds.size() = {%d}, paths.size() = {%d}",
+				srcSwId.getLong(), mgId, 
+				mgSwIds.size(), paths.size()));
+		
         // Update global link costs everytime before paths are merged
         updateLinkCostMap();
-        
 		Map<Link, Integer> linkCost = gLinkCost;
     	
     	// Create multicast path by merging
     	Path result = mergePaths(mgId, paths, linkCost, mgSwIds, true);
+		log.info(String.format("computeMulticastPath: Root: {s%d}, mgId: {%s}, "
+				+ "Result: {%s}",
+				srcSwId.getLong(), mgId, 
+				(result == null ? "Not Found" : "Found")));
 
         return result == null ? new Path(mgPathId, ImmutableList.of()) : result;
 	}
@@ -286,6 +312,14 @@ public class TopologyInstance {
 	private List<Path> selectPaths(DatapathId srcSwId, Set<DatapathId> mgSwIds) {
 		List<Path> result = new ArrayList<Path>();
 		Set<DatapathId> unselectedSwIds = new HashSet<DatapathId>(mgSwIds);
+		unselectedSwIds.remove(srcSwId);	// Path to self need not be calculated
+		if (unselectedSwIds.isEmpty()) {
+			log.info(String.format("selectPaths: root: {s%d}, "
+					+ "no path to select",
+					srcSwId.getLong()));
+			return result;
+		}
+		
 		List<DatapathId> selectedSwIds = new ArrayList<DatapathId>();
 		Map<DatapathId, Path> shortestPathSoFarMap = new HashMap<DatapathId, Path>();
 		Path shortestPath = null;
@@ -312,6 +346,10 @@ public class TopologyInstance {
 					// Get path (shortest) from _srcSwId to _dstSwId (O(1))
 					List<Path> paths = pathcache.get(pathId);
 					if (paths == null || paths.isEmpty()) {
+						log.info(String.format("selectPaths: root: {s%d}, "
+								+ "no path found from {s%d} to {s%d}",
+								srcSwId.getLong(),
+								_srcSwId.getLong(), _dstSwId.getLong()));
 						continue;
 					}
 					Path path = paths.get(0);
@@ -330,6 +368,9 @@ public class TopologyInstance {
 			// Exit if shortestPathSoFarMap is empty
 			// i.e. after first run as root has no path to destinations
 			if (shortestPathSoFarMap.isEmpty()) {
+				log.info(String.format("selectPaths: root: {s%d}, "
+						+ "after first run as root has no path to destinations",
+						srcSwId.getLong()));
 				break;
 			}
 			
@@ -372,18 +413,26 @@ public class TopologyInstance {
     		Set<DatapathId> requiredSwIds, boolean strict) {
     	// Merge Paths
     	List<NodePortTuple> nptListMerged = new LinkedList<NodePortTuple>();
+    	if (strict) {
+    		// Create a copy for modifications
+    		requiredSwIds = new HashSet<DatapathId>(requiredSwIds);
+    	}
     	Set<DatapathId> visitedSwIds = new HashSet<DatapathId>();
     	DatapathId root = null;
 		for (Path path: paths) {
     		List<NodePortTuple> nptList = path.getPath();
     		boolean ignore = true;
     		if (nptList.size() % 2 != 0) {
-    			// path must not be out of order
+    			log.info(String.format("mergePaths: pathSrc: {s%d}, pathDst: {s%d}, "
+    					+ "Current path is out of order",
+    					path.getId().getSrc().getLong(), path.getId().getDst().getLong()));
     			return null;
     		}
     		if (nptList.get(0).getNodeId().equals
     				(nptList.get(nptList.size() - 1).getNodeId())) {
-    			// path must not end in a loop
+    			log.info(String.format("mergePaths: pathSrc: {s%d}, pathDst: {s%d}, "
+    					+ "Current path ends in a loop",
+    					path.getId().getSrc().getLong(), path.getId().getDst().getLong()));
     			return null;
     		}
     		for(int index = nptList.size() - 1; index > 0; index -= 2) {
@@ -395,7 +444,9 @@ public class TopologyInstance {
     			// Validate
     			if (visitedSwIds.contains(inputSwId)) {
     				if (root == null) {
-    					// merged path must not have loop
+    	    			log.info(String.format("mergePaths: root: {%s}, "
+    	    					+ "Merged path ends in a loop",
+    	    					((root == null) ? "Null" : ("s" + root.getLong()))));
     					return null;
     				}
     				ignore = true;
@@ -409,7 +460,9 @@ public class TopologyInstance {
         			}
     				if (root != null && inputSwId.equals(root)) {
     					if (strict) {
-    						// merged path must not extend and change root
+        	    			log.info(String.format("mergePaths: root: {%s}, "
+        	    					+ "Merged path extends and changes root",
+        	    					((root == null) ? "Null" : ("s" + root.getLong()))));
         					return null;
     					}
     					root = null;
@@ -417,8 +470,10 @@ public class TopologyInstance {
     				}
     				if (index - 1 == 0) {
     					if (root != null) {
-    						if (!outputSwId.equals(root) && !ignore) {
-	        					// merged path must not have multiple roots
+    						if (!visitedSwIds.contains(outputSwId) && !outputSwId.equals(root) && !ignore) {
+            	    			log.info(String.format("mergePaths: root: {%s}, "
+            	    					+ "Merged path has multiple roots",
+            	    					((root == null) ? "Null" : ("s" + root.getLong()))));
 	        					return null;
     						}
     					}
@@ -448,9 +503,10 @@ public class TopologyInstance {
 			if (root != null && requiredSwIds.contains(root)) {
 				requiredSwIds.remove(root);
 			}
-			
 			if (!requiredSwIds.isEmpty()) {
-				// All requiredSwIds must be covered
+    			log.info(String.format("mergePaths: root: {%s}, "
+    					+ "Merged path doesn't cover all of requiredSwIds",
+    					((root == null) ? "Null" : ("s" + root.getLong()))));
 				return null;
 			}
 		}
@@ -505,81 +561,69 @@ public class TopologyInstance {
     	PathId pathId = new PathId(srcSwId, mgId);
     	Path r = pathcacheMF.get(pathId);
 
-        if (r == null) {
+        if (r == null || r.getPath() == null || r.getPath().isEmpty()) {
             return new Path(pathId, ImmutableList.of());
         }
         
-        List<NodePortTuple> nptList = new ArrayList<NodePortTuple>(r.getPath());
-        
-        /*
-         * Add input paths for for source switch
-         */
-        Set<OFPort> outPorts = getSwOutPortsFromPath(srcSwId, r.getPath());
-        NodePortTuple srcNptIn = new NodePortTuple(srcSwId, srcSwPort);
-        for (OFPort outPort: outPorts) {
-        	NodePortTuple srcNptOut = new NodePortTuple(srcSwId, outPort);
-			nptList.add(srcNptIn);
-			nptList.add(srcNptOut);
-        }
-        
-        /*
-         *  Add output paths per switch attached to devices in multicast group
-         *  Note: If source port also belongs to one of these switch ports, 
-         *  then keep it.
-         */
+        List<NodePortTuple> nptList = Collections.unmodifiableList(r.getPath());
+        List<NodePortTuple> nptListResult = new ArrayList<NodePortTuple>(r.getPath());
         Archipelago a = getArchipelago(srcSwId);
         MulticastGroup mg = a.getMulticastGroup(mgId);
-        Set<DatapathId> swIds = mg.getSwitches();
-        for (DatapathId swId: swIds) {
-    		// Ports attached to devices in switch in multicast group
-        	Set<OFPort> devPorts = mg.getAttachmentPoints(swId);
-        	
-        	// Input port
-    		OFPort inPort;
-    		if (swId != srcSwId) {
-    			inPort = getSwInPortFromPath(swId, r.getPath());
-    		}
-    		else {
-    			inPort = srcSwPort;
-    		}
-    		
-    		// Insert into nptList
-    		NodePortTuple nptIn = new NodePortTuple(swId, inPort);
+        Set<DatapathId> mgSwIds = mg.getSwitches();
+        
+        /*
+         * Add required ports that connect to attachment points
+         */
+        NodePortTuple srcNptIn = new NodePortTuple(srcSwId, srcSwPort);
+        // Add output ports to devices for destination swId = srcSwId
+		if (mgSwIds.contains(srcSwId)) {
+        	Set<OFPort> devPorts = mg.getAttachmentPoints(srcSwId);
+        	if (devPorts.isEmpty()) {
+    			log.info(String.format("getMulticastPath: srcSwId: {s%d}, "
+    					+ "CRITICAL: srcSwId has no devices!",
+    					srcSwId.getLong()));
+        		return new Path(pathId, ImmutableList.of());
+        	}
     		for (OFPort devPort: devPorts) {
-    			NodePortTuple nptOut = new NodePortTuple(swId, devPort);
-    			nptList.add(nptIn);
-    			nptList.add(nptOut);
+    			NodePortTuple srcNptOut = new NodePortTuple(srcSwId, devPort);
+    			nptListResult.add(srcNptIn);
+    			nptListResult.add(srcNptOut);
     		}
+		}
+        for (int index = 0; index < nptList.size() - 1; index += 2) {
+			NodePortTuple input = nptList.get(index);
+			DatapathId inputSwId = input.getNodeId();
+			NodePortTuple output = nptList.get(index + 1);
+			DatapathId outputSwId = output.getNodeId();
+			
+			// Add output ports to devices for destination swId (except srcSwId if any)
+			if (mgSwIds.contains(inputSwId)) {
+	        	Set<OFPort> devPorts = mg.getAttachmentPoints(inputSwId);
+	        	if (devPorts.isEmpty()) {
+	    			log.info(String.format("getMulticastPath: srcSwId: {s%d}, inputSwId: {s%d}, "
+	    					+ "WARN: inputSwId has no devices!",
+	    					srcSwId.getLong(), inputSwId.getLong()));
+	        		continue;
+	        	}
+	    		NodePortTuple nptIn = input;
+	    		for (OFPort devPort: devPorts) {
+	    			NodePortTuple nptOut = new NodePortTuple(inputSwId, devPort);
+	    			nptListResult.add(nptIn);
+	    			nptListResult.add(nptOut);
+	    		}
+			}
+			
+			// Add input port to paths for srcSwId
+			if (outputSwId.equals(srcSwId)) {
+				NodePortTuple srcNptOut = output;
+				nptListResult.add(srcNptIn);
+				nptListResult.add(srcNptOut);
+			}
         }
 
-        PathId id = new PathId(srcSwId, mgId);
-        r = new Path(id, new ArrayList<NodePortTuple>(nptList));
+        r = new Path(pathId, nptListResult);
         return r;
     }
-    
-    private Set<OFPort> getSwOutPortsFromPath(DatapathId swId, List<NodePortTuple> path) {
-    	Set<OFPort> outPorts = new HashSet<OFPort>();
-		for (int index = 0; index < path.size() - 1; index += 2) {
-			NodePortTuple npt = path.get(index + 1);
-			if (npt.getNodeId() == swId) {
-				outPorts.add(npt.getPortId());
-			}
-		}
-		return outPorts;
-	}
-
-	/*
-     * In a multicast tree, every switch has only 1 input from source
-     */
-    private OFPort getSwInPortFromPath(DatapathId swId, List<NodePortTuple> path) {
-		for (int index = 0; index < path.size() - 1; index += 2) {
-			NodePortTuple npt = path.get(index);
-			if (npt.getNodeId() == swId) {
-				return npt.getPortId();
-			}
-		}
-		return null;
-	}
 
 	public void ParticipantAdded(IPv4Address mcastAddress, IDevice device) {
 		DatapathId mgId = MulticastUtils.DpidFromMcastIP(mcastAddress);
@@ -587,6 +631,13 @@ public class TopologyInstance {
 		for (SwitchPort sp: device.getAttachmentPoints()) {
 			DatapathId swId = sp.getNodeId();
 			Archipelago a = getArchipelago(swId);
+			if (a == null) {
+				log.info(String.format("ParticipantAdded: mcastAddress: {%s}, device: {%s},"
+						+ "No suitable archipelago found for swId: {s%d}",
+						mcastAddress, device,
+						swId.getLong()));
+				continue;
+			}
 			MulticastGroup mg = a.getMulticastGroup(mgId);
 			if (mg == null) {
 				mg = new MulticastGroup(mgId, a);
@@ -606,6 +657,13 @@ public class TopologyInstance {
 		for (SwitchPort sp: device.getAttachmentPoints()) {
 			DatapathId swId = sp.getNodeId();
 			Archipelago a = getArchipelago(swId);
+			if (a == null) {
+				log.info(String.format("ParticipantRemoved: mcastAddress: {%s}, device: {%s},"
+						+ "No suitable archipelago found for switch: {s%d}",
+						mcastAddress, device,
+						swId.getLong()));
+				continue;
+			}
 			MulticastGroup mg = a.getMulticastGroup(mgId);
 			if (mg != null &&
 					mg.hasDevice(device)) {

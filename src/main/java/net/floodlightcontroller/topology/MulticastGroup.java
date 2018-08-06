@@ -50,27 +50,26 @@ public class MulticastGroup {
 	}
 	
 	public void addDevice(IDevice device) {
-		if (!devices.contains(device)) {
-			devices.add(device);
-			Set<DatapathId> validSw = archipelago.getSwitches();
-			for (SwitchPort sp: device.getAttachmentPoints()) {
-				Integer count = attachmentPointCount.get(sp);
-				if (count == null) {
-					DatapathId swId = sp.getNodeId();
-					if (validSw.contains(swId)) {
-						OFPort port = sp.getPortId();
-						Set<OFPort> ports = attachmentPoints.get(swId);
-						if (ports == null) {
-							ports = new HashSet<OFPort>();
-							attachmentPoints.put(swId, ports);
-						}
-						ports.add(port);
+		removeDevice(device);
+		devices.add(device);
+		Set<DatapathId> validSw = archipelago.getSwitches();
+		for (SwitchPort sp: device.getAttachmentPoints()) {
+			Integer count = attachmentPointCount.get(sp);
+			if (count == null) {
+				DatapathId swId = sp.getNodeId();
+				if (validSw.contains(swId)) {
+					OFPort port = sp.getPortId();
+					Set<OFPort> ports = attachmentPoints.get(swId);
+					if (ports == null) {
+						ports = new HashSet<OFPort>();
+						attachmentPoints.put(swId, ports);
 					}
-					attachmentPointCount.put(sp, 1);
+					ports.add(port);
 				}
-				else {
-					attachmentPointCount.put(sp, count + 1);
-				}
+				attachmentPointCount.put(sp, 1);
+			}
+			else {
+				attachmentPointCount.put(sp, count + 1);
 			}
 		}
 	}
@@ -108,7 +107,7 @@ public class MulticastGroup {
 	}
 	
 	public Set<DatapathId> getSwitches() {
-		return attachmentPoints.keySet();
+		return Collections.unmodifiableSet(attachmentPoints.keySet());
 	}
 	
 	public Set<OFPort> getAttachmentPoints(DatapathId swId) {

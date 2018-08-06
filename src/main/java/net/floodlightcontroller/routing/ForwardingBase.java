@@ -231,17 +231,17 @@ public abstract class ForwardingBase implements IOFMessageListener {
             OFPort inPort = swInPort.get(swId);
             if (inPort == null) {
                 if (log.isWarnEnabled()) {
-                    log.warn("Unable to push route, inPort at DPID {} " + "not available", swId);
+                    log.warn("Unable to push route to DPID {}, inPort not available", swId);
                 }
-                return false;
+                continue;
             }
             Set<OFPort> outPorts = swOutPorts.get(swId);
             if (outPorts == null ||
             		outPorts.isEmpty()) {
                 if (log.isWarnEnabled()) {
-                    log.warn("Unable to push route, outPorts at DPID {} " + "not available", swId);
+                    log.warn("Unable to push route to DPID {}, outPorts not available", swId);
                 }
-                return false;
+                continue;
             }
             if (FLOWMOD_DEFAULT_MATCH_IN_PORT) {
                 mb.setExact(MatchField.IN_PORT, inPort);
