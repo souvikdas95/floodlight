@@ -378,16 +378,12 @@ public class TopologyInstance {
     		List<NodePortTuple> nptList = path.getPath();
     		boolean ignore = true;
     		if (nptList.size() % 2 != 0) {
-    			/*
-    			 * path is out of order
-    			 */
+    			// path must not be out of order
     			return null;
     		}
     		if (nptList.get(0).getNodeId().equals
     				(nptList.get(nptList.size() - 1).getNodeId())) {
-    			/*
-    			 * path ends in a loop
-    			 */
+    			// path must not end in a loop
     			return null;
     		}
     		for(int index = nptList.size() - 1; index > 0; index -= 2) {
@@ -395,26 +391,13 @@ public class TopologyInstance {
     			DatapathId inputSwId = input.getNodeId();
     			NodePortTuple output = nptList.get(index - 1);
     			DatapathId outputSwId = output.getNodeId();
-    			if (index - 1 == 0) {
-    				if (!ignore && !visitedSwIds.contains(outputSwId) &&
-    						root != null && !outputSwId.equals(root)) {
-    					/*
-    					 * merged path will have multiple roots
-    					 */
-    					return null;
-    				}
-    				root = outputSwId;
-    			}
-    			else {
-    				if (strict && root != null && 
-    						(outputSwId.equals(root) || inputSwId.equals(root))) {
-    					/*
-    					 * merged path will extend and change root
-    					 */
-    					return null;
-    				}
-    			}
+    			
+    			// Validate
     			if (visitedSwIds.contains(inputSwId)) {
+    				if (root == null) {
+    					// merged path must not have loop
+    					return null;
+    				}
     				ignore = true;
     			}
     			else {
@@ -424,7 +407,34 @@ public class TopologyInstance {
     					}
     					ignore = false;
         			}
+    				if (root != null && inputSwId.equals(root)) {
+    					if (strict) {
+    						// merged path must not extend and change root
+        					return null;
+    					}
+    					root = null;
+    					ignore = false;
+    				}
+    				if (index - 1 == 0) {
+    					if (root != null) {
+    						if (!outputSwId.equals(root) && !ignore) {
+	        					// merged path must not have multiple roots
+	        					return null;
+    						}
+    					}
+        				else {
+        					if (visitedSwIds.contains(outputSwId)) {
+        						root = inputSwId;
+        						ignore = true;
+        					}
+        					else {
+        						root = outputSwId;
+        					}
+        				}	
+    				}
     			}
+    			
+    			// Update
     			if (!ignore) {
     				visitedSwIds.add(inputSwId);
 					nptListMerged.add(input);
@@ -433,17 +443,14 @@ public class TopologyInstance {
     		}
     	}
 		if (strict) {
+			 // final root is never visited. So,
+			 // if requiredSwIds has it, remove it.
 			if (root != null && requiredSwIds.contains(root)) {
-				/*
-				 * final root is never visited. So,
-				 * if requiredSwIds has it, remove it.
-				 */
 				requiredSwIds.remove(root);
 			}
+			
 			if (!requiredSwIds.isEmpty()) {
-				/*
-				 * All requiredSwIds are not covered
-				 */
+				// All requiredSwIds must be covered
 				return null;
 			}
 		}
