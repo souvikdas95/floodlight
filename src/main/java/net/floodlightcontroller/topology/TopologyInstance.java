@@ -257,7 +257,7 @@ public class TopologyInstance {
     	Archipelago a = getArchipelago(srcSwId);
     	if (a == null) {
     		if (log.isDebugEnabled()) {
-				log.debug(String.format("computeMulticastPath: Root: {s%d}, mgId: {s%d},"
+				log.debug(String.format("computeMulticastPath: Root: {s%d}, mgId: {%s},"
 						+ "No suitable archipelago found",
 						srcSwId.getLong(), mgId));
     		}
@@ -267,7 +267,7 @@ public class TopologyInstance {
     	MulticastGroup mg = a.getMulticastGroup(mgId);
     	if (mg == null) {
     		if (log.isDebugEnabled()) {
-				log.debug(String.format("computeMulticastPath: Root: {s%d}, mgId: {s%d},"
+				log.debug(String.format("computeMulticastPath: Root: {s%d}, mgId: {%s},"
 						+ "No suitable multicast group found",
 						srcSwId.getLong(), mgId));
     		}
@@ -278,7 +278,7 @@ public class TopologyInstance {
     	if (mgSwIds.isEmpty() ||
     			(mgSwIds.size() == 1 && mgSwIds.contains(srcSwId))) {
     		if (log.isDebugEnabled()) {
-				log.debug(String.format("computeMulticastPath: Root: {s%d}, mgId: {s%d},"
+				log.debug(String.format("computeMulticastPath: Root: {s%d}, mgId: {%s},"
 						+ "Multicast group is either empty or needs no path",
 						srcSwId.getLong(), mgId));
     		}
@@ -606,6 +606,7 @@ public class TopologyInstance {
     public Path getMulticastPath(DatapathId srcSwId, OFPort srcSwPort, DatapathId mgId) {
     	PathId pathId = new PathId(srcSwId, mgId);
     	Path r = pathcacheMF.get(pathId);
+    	StringBuilder spTrace = new StringBuilder();
 
         if (r == null || r.getPath() == null || r.getPath().isEmpty()) {
             return new Path(pathId, ImmutableList.of());
@@ -625,9 +626,9 @@ public class TopologyInstance {
 		if (mgSwIds.contains(srcSwId)) {
         	Set<OFPort> devPorts = mg.getAttachmentPoints(srcSwId);
         	if (devPorts.isEmpty()) {
-    			log.error(String.format("getMulticastPath: srcSwId: {s%d}, "
+    			log.error(String.format("getMulticastPath: srcSwId: {s%d}, mgId: {%s}"
     					+ "CRITICAL: srcSwId has no devices!",
-    					srcSwId.getLong()));
+    					srcSwId.getLong(), mgId));
         		return new Path(pathId, ImmutableList.of());
         	}
     		for (OFPort devPort: devPorts) {
@@ -636,19 +637,31 @@ public class TopologyInstance {
     			nptListResult.add(srcNptOut);
     		}
 		}
+		if (log.isTraceEnabled()) {
+			spTrace.append(String.format("getMulticastPath: srcSwId: {s%d}, mgId: {%s} => ", srcSwId.getLong(), mgId));
+		}
         for (int index = 0; index < nptList.size() - 1; index += 2) {
 			NodePortTuple input = nptList.get(index);
 			DatapathId inputSwId = input.getNodeId();
 			NodePortTuple output = nptList.get(index + 1);
 			DatapathId outputSwId = output.getNodeId();
 			
+			// Trace path
+			if (log.isTraceEnabled()) {
+				spTrace.append(String.format("(s%d:%d <-- s%d:%d), ", 
+					inputSwId.getLong(), 
+					input.getPortId().getPortNumber(), 
+					outputSwId.getLong(), 
+					output.getPortId().getPortNumber()));
+			}
+			
 			// Add output ports to devices for destination swId (except srcSwId if any)
 			if (mgSwIds.contains(inputSwId)) {
 	        	Set<OFPort> devPorts = mg.getAttachmentPoints(inputSwId);
 	        	if (devPorts.isEmpty()) {
-	    			log.warn(String.format("getMulticastPath: srcSwId: {s%d}, inputSwId: {s%d}, "
+	    			log.warn(String.format("getMulticastPath: srcSwId: {s%d}, mgId: {%s}, inputSwId: {s%d}, "
 	    					+ "WARNING: inputSwId has no devices!",
-	    					srcSwId.getLong(), inputSwId.getLong()));
+	    					srcSwId.getLong(), mgId, inputSwId.getLong()));
 	        		continue;
 	        	}
 	    		NodePortTuple nptIn = input;
@@ -665,6 +678,9 @@ public class TopologyInstance {
 				nptListResult.add(srcNptIn);
 				nptListResult.add(srcNptOut);
 			}
+        }
+        if (log.isTraceEnabled()) {
+        	log.trace(spTrace.toString());
         }
 
         r = new Path(pathId, nptListResult);
