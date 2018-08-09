@@ -216,7 +216,7 @@ public class TopologyInstance {
 			participantTable.getMcastToDeviceMap().entrySet()) {
 			IPv4Address mcastAddress = entry.getKey();
 			for (IDevice device: entry.getValue()) {
-				ParticipantAdded(mcastAddress, device);
+				ParticipantAdded(mcastAddress, device, true);
 			}
 		}
 	}
@@ -687,7 +687,7 @@ public class TopologyInstance {
         return r;
     }
 
-	public void ParticipantAdded(IPv4Address mcastAddress, IDevice device) {
+	public void ParticipantAdded(IPv4Address mcastAddress, IDevice device, boolean recomputePaths) {
 		DatapathId mgId = MulticastUtils.DpidFromMcastIP(mcastAddress);
 		Set<MulticastGroup> visited = new HashSet<MulticastGroup>();
 		for (SwitchPort sp: device.getAttachmentPoints()) {
@@ -710,10 +710,12 @@ public class TopologyInstance {
 				visited.add(mg);
 			}
 		}
-		computeMulticastPaths(visited);
+		if (recomputePaths) {
+			computeMulticastPaths(visited);
+		}
 	}
 
-	public void ParticipantRemoved(IPv4Address mcastAddress, IDevice device) {
+	public void ParticipantRemoved(IPv4Address mcastAddress, IDevice device, boolean recomputePaths) {
 		DatapathId mgId = MulticastUtils.DpidFromMcastIP(mcastAddress);
 		Set<MulticastGroup> visited = new HashSet<MulticastGroup>();
 		for (SwitchPort sp: device.getAttachmentPoints()) {
@@ -744,7 +746,9 @@ public class TopologyInstance {
 				}
 			}
 		}
-		computeMulticastPaths(visited);
+		if (recomputePaths) {
+			computeMulticastPaths(visited);
+		}
 	}
 	
 	/*

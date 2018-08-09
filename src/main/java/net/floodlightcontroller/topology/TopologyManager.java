@@ -1365,12 +1365,12 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener, ISessionLis
 	@Override
 	public void ParticipantAdded(IPv4Address mcastAddress, IDevice device) {
 		TopologyInstance ti = getCurrentInstance();
-		ti.ParticipantAdded(mcastAddress, device);
+		ti.ParticipantAdded(mcastAddress, device, true);
 	}
 
 	@Override
 	public void ParticipantRemoved(IPv4Address mcastAddress, IDevice device) {
 		TopologyInstance ti = getCurrentInstance();
-		ti.ParticipantRemoved(mcastAddress, device);
+		ti.ParticipantRemoved(mcastAddress, device, true);
 	}
 }
