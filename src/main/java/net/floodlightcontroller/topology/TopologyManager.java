@@ -26,6 +26,7 @@ import net.floodlightcontroller.core.types.NodePortTuple;
 import net.floodlightcontroller.core.util.SingletonTask;
 import net.floodlightcontroller.debugcounter.IDebugCounter;
 import net.floodlightcontroller.debugcounter.IDebugCounterService;
+import net.floodlightcontroller.devicemanager.IDevice;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryListener;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
 import net.floodlightcontroller.linkdiscovery.Link;
@@ -38,11 +39,13 @@ import net.floodlightcontroller.routing.web.RoutingWebRoutable;
 import net.floodlightcontroller.statistics.IStatisticsService;
 import net.floodlightcontroller.threadpool.IThreadPoolService;
 import net.floodlightcontroller.topology.web.TopologyWebRoutable;
+import net.floodlightcontroller.util.MulticastUtils;
 import net.floodlightcontroller.util.OFMessageUtils;
 import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.types.DatapathId;
+import org.projectfloodlight.openflow.types.IPAddress;
 import org.projectfloodlight.openflow.types.OFBufferId;
 import org.projectfloodlight.openflow.types.OFPort;
 import org.projectfloodlight.openflow.types.U64;
@@ -51,6 +54,7 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.ImmutableSet;
 
+import java.math.BigInteger;
 import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -63,7 +67,8 @@ import java.util.concurrent.TimeUnit;
  * through the topology.
  */
 public class TopologyManager implements IFloodlightModule, ITopologyService, 
-ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
+ITopologyManagerBackend, ITopologyMulticastService, ILinkDiscoveryListener, 
+IOFMessageListener {
     private static Logger log = LoggerFactory.getLogger(TopologyManager.class);
     public static final String MODULE_NAME = "topology";
 
@@ -148,6 +153,11 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
     protected static final String PACKAGE = TopologyManager.class.getPackage().getName();
     protected IDebugCounter ctrIncoming;
 
+    /**
+     * Table contains multicast group membership information
+     */
+    protected ParticipantTable participantTable;
+    
     //  Getter/Setter methods
     /**
      * Get the time interval for the period topology updates, if any.
@@ -612,7 +622,9 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
         ldUpdates = new LinkedBlockingQueue<LDUpdate>();
         haListener = new HAListenerDelegate();
         registerTopologyDebugCounters();
-
+        
+        participantTable = new ParticipantTable();
+        
         Map<String, String> configOptions = context.getConfigParams(this);
         String metric = configOptions.get("pathMetric") != null
                 ? configOptions.get("pathMetric").trim().toLowerCase() : null;
@@ -1013,7 +1025,17 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
                 interClusterLinks);
 
         nt.compute();
-
+        
+        // Repopulate multicast groups and paths
+		for (Map.Entry<IPAddress<?>, Set<IDevice>> entry: 
+			participantTable.entrySet()) {
+			IPAddress<?> mcastAddress = entry.getKey();
+			Set<IDevice> devices = entry.getValue();
+			BigInteger mgId = MulticastUtils.MgIdFromMcastIP(mcastAddress);
+			nt.addParticipants(mgId, devices, false);
+		}
+		nt.computeMulticastPaths(null);	// all multicast paths
+        
         currentInstance = nt;
 
         return true;
@@ -1346,4 +1368,100 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
         /* cannot invoke scheduled executor, since the update might not occur */
         return updateTopology("forced-recomputation", true);
     }
+    
+    /**
+     * Multicast Participant Methods
+     */
+	@Override
+	public void addParticipant(IPAddress<?> mcastAddress, IDevice device) {
+		// Update Current TopologyInstance
+		TopologyInstance ti = getCurrentInstance();
+		BigInteger mgId = MulticastUtils.MgIdFromMcastIP(mcastAddress);
+		Set<IDevice> devices = new HashSet<IDevice>();
+		devices.add(device);
+		ti.addParticipants(mgId, devices, true);
+		
+		participantTable.add(mcastAddress, device);
+	}
+
+	@Override
+	public void removeParticipant(IPAddress<?> mcastAddress, IDevice device) {
+		// Update Current TopologyInstance
+		TopologyInstance ti = getCurrentInstance();
+		BigInteger mgId = MulticastUtils.MgIdFromMcastIP(mcastAddress);
+		Set<IDevice> devices = new HashSet<IDevice>();
+		devices.add(device);
+		ti.removeParticipants(mgId, devices, true);
+		
+		participantTable.remove(mcastAddress, device);
+	}
+
+	@Override
+	public boolean hasParticipant(IPAddress<?> mcastAddress, IDevice device) {
+		return participantTable.contains(mcastAddress, device);
+	}
+
+	@Override
+	public Set<IDevice> getParticipantMembers(IPAddress<?> mcastAddress) {
+		return participantTable.getMembers(mcastAddress);
+	}
+
+	@Override
+	public Set<IPAddress<?>> getParticipantGroups(IDevice device) {
+		return participantTable.getGroups(device);
+	}
+
+	@Override
+	public Set<IDevice> getAllParticipantMembers() {
+		return participantTable.getAllMembers();
+	}
+
+	@Override
+	public Set<IPAddress<?>> getAllParticipantGroups() {
+		return participantTable.getAllGroups();
+	}
+
+	@Override
+	public boolean isParticipantMember(IDevice device) {
+		return participantTable.isMember(device);
+	}
+
+	@Override
+	public boolean isParticipantGroup(IPAddress<?> mcastAddress) {
+		return participantTable.isGroup(mcastAddress);
+	}
+
+	@Override
+	public void deleteParticipantGroup(IPAddress<?> mcastAddress) {
+		// Update Current TopologyInstance
+		BigInteger mgId = MulticastUtils.MgIdFromMcastIP(mcastAddress);
+		TopologyInstance ti = getCurrentInstance();
+		ti.removeParticipants(mgId, participantTable.getMembers(mcastAddress), true);
+		
+		participantTable.deleteGroup(mcastAddress);
+	}
+
+	@Override
+	public void deleteParticipantMember(IDevice device) {
+		// Update Current TopologyInstance
+		Set<BigInteger> mgIds = new HashSet<BigInteger>();
+		for (IPAddress<?> mcastAddress: participantTable.getAllGroups()) {
+			mgIds.add(MulticastUtils.MgIdFromMcastIP(mcastAddress));
+		}
+		Set<IDevice> devices = new HashSet<IDevice>();
+		devices.add(device);
+		TopologyInstance ti = getCurrentInstance();
+		ti.removeParticipants(mgIds, devices, true);
+		
+		participantTable.deleteMember(device);
+	}
+
+	@Override
+	public void clearAllParticipants() {
+		// Update Current TopologyInstance
+		TopologyInstance ti = getCurrentInstance();
+		ti.clearParticipants();
+		
+		participantTable.clearTable();
+	}
 }

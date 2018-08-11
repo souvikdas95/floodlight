@@ -1,5 +1,6 @@
 package net.floodlightcontroller.routing;
 
+import java.math.BigInteger;
 import java.util.*;
 
 import net.floodlightcontroller.core.IOFSwitch;
@@ -175,4 +176,9 @@ public class RoutingManager implements IFloodlightModule, IRoutingService {
     public boolean isL3RoutingEnabled() {
         return enableL3RoutingService;
     }
+
+	@Override
+	public MulticastPath getMulticastPath(DatapathId srcSwId, OFPort srcSwPort, BigInteger mgId) {
+		return tm.getCurrentTopologyInstance().getMulticastPath(srcSwId, srcSwPort, mgId);
+	}
 }
