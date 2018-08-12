@@ -92,7 +92,7 @@ public class IGMPManager implements IFloodlightModule, IOFMessageListener, IMult
 	
 	@Override
 	public String getName() {
-		return "multicasting";
+		return "igmpmanager";
 	}
 
 	@Override
