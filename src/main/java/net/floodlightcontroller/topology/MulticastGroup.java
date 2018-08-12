@@ -7,8 +7,6 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-import javax.annotation.Nonnull;
-
 import org.projectfloodlight.openflow.types.DatapathId;
 import org.projectfloodlight.openflow.types.OFPort;
 import org.python.google.common.collect.ImmutableSet;
@@ -36,7 +34,7 @@ public class MulticastGroup {
 	// Count of duplicate attachment points
 	private Map<NodePortTuple, Integer> attachmentPointsCount;
 	
-	public MulticastGroup(@Nonnull BigInteger mgId, Archipelago archipelago) {
+	public MulticastGroup(BigInteger mgId, Archipelago archipelago) {
 		this.mgId = mgId;
 		this.archipelago = archipelago;
 		devices = new HashSet<IDevice>();

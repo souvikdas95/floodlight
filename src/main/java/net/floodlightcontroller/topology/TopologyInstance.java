@@ -28,8 +28,11 @@ import net.floodlightcontroller.routing.Path;
 import net.floodlightcontroller.routing.PathId;
 import net.floodlightcontroller.statistics.SwitchPortBandwidth;
 import net.floodlightcontroller.util.ClusterDFS;
+import net.floodlightcontroller.util.MulticastUtils;
+
 import org.projectfloodlight.openflow.protocol.OFPortDesc;
 import org.projectfloodlight.openflow.types.DatapathId;
+import org.projectfloodlight.openflow.types.IPAddress;
 import org.projectfloodlight.openflow.types.OFPort;
 import org.projectfloodlight.openflow.types.U64;
 import org.python.google.common.collect.ImmutableList;
@@ -181,7 +184,17 @@ public class TopologyInstance {
          * to aid in quick lookup per archipelago, per-switch, and topology-global.
          */
         computeBroadcastPortsPerArchipelago();
-
+        
+        /*
+         * Step 6: Identify multicast groups using existing Participant table
+         */
+        identifyMutlticastGroups();
+        
+        /*
+         * Step 7: Compute all multicast paths for all archipelagos
+         */
+        computeMulticastPaths(null);
+        
         /*
          * Step 6: Optionally, print topology to log for added verbosity or when debugging.
          */
@@ -1446,7 +1459,22 @@ public class TopologyInstance {
     public Set<DatapathId> getArchipelagoIds() {
         return archipelagos.stream().map(Archipelago::getId).collect(Collectors.toSet());
     }
-
+    
+    /**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Creates multicast groups using multicasting participant table
+     * 
+     * @return
+     */
+    private void identifyMutlticastGroups() {
+		for (IPAddress<?> mcastAddress: TopologyManager.multicastingService.getAllParticipantGroups()) {
+			BigInteger mgId = MulticastUtils.MgIdFromMcastIP(mcastAddress);
+			Set<IDevice> devices = TopologyManager.multicastingService.getParticipantMembers(mcastAddress);
+			addParticipants(mgId, devices, false);
+		}
+    }
+    
     /**
      * @author Souvik Das (souvikdas95@yahoo.co.in)
      * 

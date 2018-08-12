@@ -1,4 +1,4 @@
-package net.floodlightcontroller.topology;
+package net.floodlightcontroller.multicasting;
 
 import java.util.Set;
 
@@ -7,8 +7,7 @@ import org.projectfloodlight.openflow.types.IPAddress;
 import net.floodlightcontroller.core.module.IFloodlightService;
 import net.floodlightcontroller.devicemanager.IDevice;
 
-public interface ITopologyMulticastService extends IFloodlightService  {
-	
+public interface IMulticastService extends IFloodlightService {
 	public void addParticipant(IPAddress<?> mcastAddress, IDevice device);
 	
 	public void removeParticipant(IPAddress<?> mcastAddress, IDevice device);
@@ -32,4 +31,8 @@ public interface ITopologyMulticastService extends IFloodlightService  {
 	public void deleteParticipantMember(IDevice device);
 	
 	public void clearAllParticipants();
+	
+    public void addListener(IMulticastListener listener);
+
+    public void removeListener(IMulticastListener listener);
 }
