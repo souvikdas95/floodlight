@@ -177,7 +177,8 @@ public abstract class ForwardingBase implements IOFMessageListener {
          */
         Map<IOFSwitch, Set<OFPort>> swOutPorts = new HashMap<IOFSwitch, Set<OFPort>>();
         Map<IOFSwitch, OFPort> swInPort = new HashMap<IOFSwitch, OFPort>();
-        for (int index = 0; index < switchPortList.size() - 1; index = index + 2) {
+        List<IOFSwitch> swList = new LinkedList<IOFSwitch>();
+        for (int index = 0; index < switchPortList.size() - 1; index += 2) {
 			NodePortTuple input = switchPortList.get(index);
 			NodePortTuple output = switchPortList.get(index + 1);
 			DatapathId inputSwId = input.getNodeId();
@@ -190,14 +191,14 @@ public abstract class ForwardingBase implements IOFMessageListener {
         	
             if (inputSw == null) {
                 if (log.isErrorEnabled()) {
-                    log.error("Unable to push multicast route, switch at DPID {} " + "not available", inputSw.getId());
+                    log.error("Unable to push multicast route, switch at DPID {} " + "not available", inputSwId);
                 }
                 return false;
             }
             
             if (outputSw == null) {
                 if (log.isErrorEnabled()) {
-                    log.error("Unable to push multicast route, switch at DPID {} " + "not available", outputSw.getId());
+                    log.error("Unable to push multicast route, switch at DPID {} " + "not available", outputSwId);
                 }
                 return false;
             }
@@ -212,11 +213,19 @@ public abstract class ForwardingBase implements IOFMessageListener {
     			swOutPorts.put(outputSw, outPorts);
     		}
     		outPorts.add(outputPort);
+    		
+    		// Add to swList
+    		if (inputSwId.equals(pinSwitch)) {
+    			swList.add(inputSw);
+    		}
+    		else {
+    			swList.add(0, inputSw);	
+    		}
         }
         
         /*
          *  Both swInPort and swOutPorts must have same keyset of switches
-         *  A switch without either of them makes the entire path invalid
+         *  A switch without either of them makes the entire path invalid.
          */
         if (!swInPort.keySet().equals(swOutPorts.keySet())) {
             if (log.isErrorEnabled()) {
@@ -228,7 +237,7 @@ public abstract class ForwardingBase implements IOFMessageListener {
         /* 
          * Install flow rules on switches
          */
-        for (IOFSwitch sw: swInPort.keySet()) {
+        for (IOFSwitch sw: swList) {
             // need to build flow mod based on what type it is. Cannot set command later
             OFFlowMod.Builder fmb;
             switch (flowModCommand) {
@@ -296,6 +305,19 @@ public abstract class ForwardingBase implements IOFMessageListener {
                                 outPorts });
             }
 
+            /* 
+             * Push multicast packet out the first hop switch
+             */
+        	if (!packetOutSent && sw.getId().equals(pinSwitch) &&
+                    !fmb.getCommand().equals(OFFlowModCommand.DELETE) &&
+                    !fmb.getCommand().equals(OFFlowModCommand.DELETE_STRICT)) {
+            	/* Use the buffered packet at the switch, if there's one stored */
+            	if (log.isDebugEnabled()) {
+            		log.debug("Push multicast packet out the first hop switch");
+            	}
+                pushPacketMF(sw, pi, outPorts, true, cntx);
+            }
+            
             if (OFDPAUtils.isOFDPASwitch(sw)) {
             	List<Map.Entry<VlanVid, OFPort>> outVlanPortTable = new ArrayList<Map.Entry<VlanVid, OFPort>>();
             	for (OFPort outPort: outPorts) {
@@ -310,21 +332,6 @@ public abstract class ForwardingBase implements IOFMessageListener {
             } else {
                 messageDamper.write(sw, fmb.build());
             }
-        }
-        
-        /* 
-         * Push multicast packet out the first hop switch
-         */
-        if (!packetOutSent &&
-        		!flowModCommand.equals(OFFlowModCommand.DELETE) &&
-        		!flowModCommand.equals(OFFlowModCommand.DELETE_STRICT)) {
-        	/* Use the buffered packet at the switch, if there's one stored */
-        	if (log.isDebugEnabled()) {
-        		log.debug("Push multicast packet out the first hop switch");
-        	}
-        	IOFSwitch sw = switchService.getSwitch(pinSwitch);
-            Set<OFPort> outPorts = swOutPorts.get(sw);
-            pushPacketMF(sw, pi, outPorts, true, cntx);
         }
 
         return true;
