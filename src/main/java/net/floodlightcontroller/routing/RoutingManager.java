@@ -178,7 +178,7 @@ public class RoutingManager implements IFloodlightModule, IRoutingService {
     }
 
 	@Override
-	public MulticastPath getMulticastPath(DatapathId srcSwId, OFPort srcSwPort, BigInteger mgId) {
-		return tm.getCurrentTopologyInstance().getMulticastPath(srcSwId, srcSwPort, mgId);
+	public MulticastPath getMulticastPath(DatapathId srcSwId, BigInteger mgId) {
+		return tm.getCurrentTopologyInstance().getMulticastPath(srcSwId, mgId);
 	}
 }
