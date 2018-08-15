@@ -73,12 +73,14 @@ public class MulticastManager implements IFloodlightModule, IMulticastService {
 			return;
 		}
 		
-		// Inform listeners
-		for (IMulticastListener multicastingListener: multicastingListeners) {
-			multicastingListener.ParticipantAdded(mcastAddress, device);
+		if (!participantTable.contains(mcastAddress, device)) {
+			// Inform listeners
+			for (IMulticastListener multicastingListener: multicastingListeners) {
+				multicastingListener.ParticipantAdded(mcastAddress, device);
+			}
+			
+			participantTable.add(mcastAddress, device);
 		}
-		
-		participantTable.add(mcastAddress, device);
 	}
 
 	@Override
@@ -87,12 +89,14 @@ public class MulticastManager implements IFloodlightModule, IMulticastService {
 			return;
 		}
 		
-		// Inform listeners
-		for (IMulticastListener multicastingListener: multicastingListeners) {
-			multicastingListener.ParticipantRemoved(mcastAddress, device);
+		if (participantTable.contains(mcastAddress, device)) {
+			// Inform listeners
+			for (IMulticastListener multicastingListener: multicastingListeners) {
+				multicastingListener.ParticipantRemoved(mcastAddress, device);
+			}
+			
+			participantTable.remove(mcastAddress, device);
 		}
-		
-		participantTable.remove(mcastAddress, device);
 	}
 
 	@Override
@@ -137,11 +141,13 @@ public class MulticastManager implements IFloodlightModule, IMulticastService {
 		}
 		
 		// Inform listeners
-		for (IMulticastListener multicastingListener: multicastingListeners) {
-			multicastingListener.ParticipantGroupRemoved(mcastAddress);
+		if (participantTable.isGroup(mcastAddress)) {
+			for (IMulticastListener multicastingListener: multicastingListeners) {
+				multicastingListener.ParticipantGroupRemoved(mcastAddress);
+			}
+			
+			participantTable.deleteGroup(mcastAddress);
 		}
-		
-		participantTable.deleteGroup(mcastAddress);
 	}
 
 	@Override
@@ -150,12 +156,14 @@ public class MulticastManager implements IFloodlightModule, IMulticastService {
 			return;
 		}
 		
-		// Inform listeners
-		for (IMulticastListener multicastingListener: multicastingListeners) {
-			multicastingListener.ParticipantMemberRemoved(device);
-		}
+		if (participantTable.isMember(device)) {
+			// Inform listeners
+			for (IMulticastListener multicastingListener: multicastingListeners) {
+				multicastingListener.ParticipantMemberRemoved(device);
+			}
 		
-		participantTable.deleteMember(device);
+			participantTable.deleteMember(device);
+		}
 	}
 
 	@Override
