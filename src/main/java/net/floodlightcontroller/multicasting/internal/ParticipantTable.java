@@ -6,6 +6,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.projectfloodlight.openflow.types.IPAddress;
+import org.python.google.common.collect.ImmutableSet;
 
 import net.floodlightcontroller.devicemanager.IDevice;
 
@@ -14,8 +15,8 @@ import net.floodlightcontroller.devicemanager.IDevice;
  * all topology instances
  */
 public class ParticipantTable {	
-	private Map<IPAddress<?>, Set<IDevice>> mcastToDeviceMap;
-	private Map<IDevice, Set<IPAddress<?>>> deviceToMcastMap;
+	private final Map<IPAddress<?>, Set<IDevice>> mcastToDeviceMap;
+	private final Map<IDevice, Set<IPAddress<?>>> deviceToMcastMap;
 	
 	public ParticipantTable() {
 		mcastToDeviceMap = new ConcurrentHashMap<IPAddress<?>, Set<IDevice>>();
@@ -27,6 +28,10 @@ public class ParticipantTable {
 	}
 	
 	public void add(IPAddress<?> mcastAddress, IDevice device) {
+		if (mcastAddress == null || device == null) {
+			return;
+		}
+		
 		// Add to Member Set
 		if (!mcastToDeviceMap.containsKey(mcastAddress)) {
 			mcastToDeviceMap.put(mcastAddress, ConcurrentHashMap.newKeySet());
@@ -46,8 +51,11 @@ public class ParticipantTable {
 		}
 	}
 	
-	public void remove(IPAddress<?> mcastAddress, IDevice device)
-	{
+	public void remove(IPAddress<?> mcastAddress, IDevice device) {
+		if (mcastAddress == null || device == null) {
+			return;
+		}
+		
 		// Remove from Member Set
 		if (mcastToDeviceMap.containsKey(mcastAddress)) {
 			Set<IDevice> memberSet  = mcastToDeviceMap.get(mcastAddress);
@@ -72,6 +80,9 @@ public class ParticipantTable {
 	}
 	
 	public boolean contains(IPAddress<?> mcastAddress, IDevice device) {
+		if (mcastAddress == null || device == null) {
+			return false;
+		}
 		if (mcastToDeviceMap.containsKey(mcastAddress) && 
 				deviceToMcastMap.containsKey(device)) {
 			return true;
@@ -80,40 +91,55 @@ public class ParticipantTable {
 	}
 	
 	public Set<IDevice> getMembers(IPAddress<?> mcastAddress) {
+		if (mcastAddress == null) {
+			return ImmutableSet.of();
+		}
 		if (mcastToDeviceMap.containsKey(mcastAddress)) {
 			Set<IDevice> memberSet = ConcurrentHashMap.newKeySet();
 			memberSet.addAll(mcastToDeviceMap.get(mcastAddress));
-			return memberSet;
+			return Collections.unmodifiableSet(memberSet);
 		}
-		return null;
+		return ImmutableSet.of();
 	}
 	
 	public Set<IPAddress<?>> getGroups(IDevice device) {
+		if (device == null) {
+			return ImmutableSet.of();
+		}
 		if (deviceToMcastMap.containsKey(device)) {
 			Set<IPAddress<?>> groupSet = ConcurrentHashMap.newKeySet();
 			groupSet.addAll(deviceToMcastMap.get(device));
-			return groupSet;
+			return Collections.unmodifiableSet(groupSet);
 		}
-		return null;
+		return ImmutableSet.of();
 	}
 	
 	public Set<IDevice> getAllMembers() {
-		return deviceToMcastMap.keySet();
+		return Collections.unmodifiableSet(deviceToMcastMap.keySet());
 	}
 	
 	public Set<IPAddress<?>> getAllGroups() {
-		return mcastToDeviceMap.keySet();
+		return Collections.unmodifiableSet(mcastToDeviceMap.keySet());
 	}
 	
 	public boolean isMember(IDevice device) {
+		if (device == null) {
+			return false;
+		}
 		return deviceToMcastMap.containsKey(device);
 	}
 	
 	public boolean isGroup(IPAddress<?> mcastAddress) {
+		if (mcastAddress == null) {
+			return false;
+		}
 		return mcastToDeviceMap.containsKey(mcastAddress);
 	}
 	
 	public void deleteGroup(IPAddress<?> mcastAddress) {
+		if (mcastAddress == null) {
+			return;
+		}
 		if (mcastToDeviceMap.containsKey(mcastAddress)) {
 			Set<IDevice> memberSet = mcastToDeviceMap.get(mcastAddress);
 			for(IDevice device: memberSet) {
@@ -123,6 +149,9 @@ public class ParticipantTable {
 	}
 	
 	public void deleteMember(IDevice device) {
+		if (device == null) {
+			return;
+		}
 		if (deviceToMcastMap.containsKey(device)) {
 			Set<IPAddress<?>> groupSet = deviceToMcastMap.get(device);			
 			for(IPAddress<?> mcastAddress: groupSet) {

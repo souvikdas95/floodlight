@@ -69,6 +69,10 @@ public class MulticastManager implements IFloodlightModule, IMulticastService {
 	
 	@Override
 	public void addParticipant(IPAddress<?> mcastAddress, IDevice device) {
+		if (mcastAddress == null || device == null) {
+			return;
+		}
+		
 		// Inform listeners
 		for (IMulticastListener multicastingListener: multicastingListeners) {
 			multicastingListener.ParticipantAdded(mcastAddress, device);
@@ -79,6 +83,10 @@ public class MulticastManager implements IFloodlightModule, IMulticastService {
 
 	@Override
 	public void removeParticipant(IPAddress<?> mcastAddress, IDevice device) {
+		if (mcastAddress == null || device == null) {
+			return;
+		}
+		
 		// Inform listeners
 		for (IMulticastListener multicastingListener: multicastingListeners) {
 			multicastingListener.ParticipantRemoved(mcastAddress, device);
@@ -124,6 +132,10 @@ public class MulticastManager implements IFloodlightModule, IMulticastService {
 
 	@Override
 	public void deleteParticipantGroup(IPAddress<?> mcastAddress) {
+		if (mcastAddress == null) {
+			return;
+		}
+		
 		// Inform listeners
 		for (IMulticastListener multicastingListener: multicastingListeners) {
 			multicastingListener.ParticipantGroupRemoved(mcastAddress);
@@ -134,6 +146,10 @@ public class MulticastManager implements IFloodlightModule, IMulticastService {
 
 	@Override
 	public void deleteParticipantMember(IDevice device) {
+		if (device == null) {
+			return;
+		}
+		
 		// Inform listeners
 		for (IMulticastListener multicastingListener: multicastingListeners) {
 			multicastingListener.ParticipantMemberRemoved(device);
