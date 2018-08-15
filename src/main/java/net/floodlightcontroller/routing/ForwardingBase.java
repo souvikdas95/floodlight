@@ -247,8 +247,8 @@ public abstract class ForwardingBase implements IOFMessageListener {
             }
 
             if (OFDPAUtils.isOFDPASwitch(sw)) {
-            	List<Map.Entry<VlanVid, OFPort>> outVlanPortTable = new ArrayList<Map.Entry<VlanVid, OFPort>>();
-            	outVlanPortTable.add(new AbstractMap.SimpleEntry<VlanVid, OFPort>(VlanVid.ZERO, outPort));
+            	List<Map.Entry<VlanVid, OFPort>> outVlanPortTable = 
+            			Arrays.asList(new AbstractMap.SimpleEntry<VlanVid, OFPort>(VlanVid.ZERO, outPort));
                 OFDPAUtils.addLearningSwitchFlow(sw, cookie, 
                         FLOWMOD_DEFAULT_PRIORITY, 
                         FLOWMOD_DEFAULT_HARD_TIMEOUT,

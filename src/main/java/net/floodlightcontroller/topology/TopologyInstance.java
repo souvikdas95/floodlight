@@ -1561,12 +1561,12 @@ public class TopologyInstance {
 		Map<DatapathId, Path> shortestPathSoFarMap = new HashMap<DatapathId, Path>();
 		Path shortestPath = null;
 		
-		// If unselectedSwIds contains root, insert an empty Path
-		// but with valid attachmentPoints
+		// If unselectedSwIds contains the root, add an empty Path
+		// but with valid attachmentPoints to list of paths in result
 		if (unselectedSwIds.contains(srcSwId)) {
 			unselectedSwIds.remove(srcSwId);
-			Set<OFPort> attachmentPoints = mg.getAttachmentPoints(srcSwId);
-			result.add(srcSwId, attachmentPoints, 
+			Set<OFPort> edgePorts = mg.getEdgePorts(srcSwId);
+			result.add(srcSwId, edgePorts, 
 					new Path(new PathId(srcSwId, srcSwId), ImmutableList.of()));
 		}
 		
@@ -1630,12 +1630,12 @@ public class TopologyInstance {
 			shortestPathSoFarMap.remove(dstSwId);
 			
 			// Add to result
-			Set<OFPort> attachmentPoints = mg.getAttachmentPoints(dstSwId);
-			result.add(dstSwId, attachmentPoints, shortestPath);
+			Set<OFPort> edgePorts = mg.getEdgePorts(dstSwId);
+			result.add(dstSwId, edgePorts, shortestPath);
 			
 		} while (shortestPathSoFarMap.size() > 0);
 		
-    	if (result == null || result.isEmpty())
+    	if (result.isEmpty())
     	{
     		if (log.isDebugEnabled()) {
 				log.debug(String.format("computeMulticastPath: srcSwId: {s%d}, mgId: {%s}, "
@@ -1653,7 +1653,11 @@ public class TopologyInstance {
      * 
      * Clear multicast paths
      * for a given collection of multicast groups
-     * Note: Each mg is unique in all archipelagos
+     * 
+     * Notes:
+     * 1. Each mg is unique in all archipelagos
+     * 2. Each mg may no longer be a part of the archipelago 
+     *    but reference remains valid until the end of scope.   
      * 
      * @return
      */
@@ -1683,7 +1687,7 @@ public class TopologyInstance {
     	MulticastPathId mPathId = new MulticastPathId(srcSwId, mgId);
     	MulticastPath mPath = pathcacheMF.get(mPathId);
 
-        return mPath;
+        return (mPath == null) ? new MulticastPath(mPathId) : mPath;
     }
     
     /**
@@ -1696,7 +1700,7 @@ public class TopologyInstance {
      *       attached to multiple devices.
      * 
      * @param mgId
-     * @param attachmentPoints
+     * @param devices
      * @param recomputePaths
      * 
      * @return
@@ -1712,9 +1716,9 @@ public class TopologyInstance {
 				}
 				Archipelago a = getArchipelago(swId);
 				if (a == null) {
-					if (log.isWarnEnabled()) {
-						log.warn(String.format("addParticipants: mgId: {%s}, attachmentPoint: {%s},"
-								+ "No suitable archipelago found, probably because of implending topology update",
+					if (log.isErrorEnabled()) {
+						log.error(String.format("addParticipants: mgId: {%s}, attachmentPoint: {%s},"
+								+ "No suitable archipelago found!",
 								mgId, npt));
 					}
 					continue;
@@ -1724,7 +1728,7 @@ public class TopologyInstance {
 					mg = new MulticastGroup(mgId, a);
 					a.addMulticastGroup(mg);
 				}
-				mg.addDevice(device);
+				mg.add(device.getDeviceKey(), npt);
 				updated.add(mg);
 			}
 		}
@@ -1743,7 +1747,7 @@ public class TopologyInstance {
      *       attached to multiple devices.
      * 
      * @param mgId
-     * @param attachmentPoints
+     * @param devices
      * @param recomputePaths
      * 
      * @return
@@ -1760,14 +1764,16 @@ public class TopologyInstance {
 				}
 				Archipelago a = getArchipelago(swId);
 				if (a == null) {
-					log.warn(String.format("removeParticipants: mgId: {%s}, attachmentPoint: {%s},"
-							+ "No suitable archipelago found, probably because of implending topology update",
-							mgId, npt));
+					if (log.isErrorEnabled()) {
+						log.error(String.format("removeParticipants: mgId: {%s}, attachmentPoint: {%s},"
+								+ "No suitable archipelago found!",
+								mgId, npt));
+					}
 					continue;
 				}
 				MulticastGroup mg = a.getMulticastGroup(mgId);
 				if (mg != null) {
-					mg.removeDevice(device);
+					mg.remove(device.getDeviceKey(), npt);
 					if (mg.isEmpty()) {
 						a.removeMulticastGroup(mg);
 						removed.add(mg);
@@ -1795,7 +1801,7 @@ public class TopologyInstance {
      *       attached to multiple devices.
      * 
      * @param mgId
-     * @param attachmentPoints
+     * @param devices
      * @param recomputePaths
      * 
      * @return
@@ -1814,7 +1820,7 @@ public class TopologyInstance {
 				if (a == null) {
 					if (log.isWarnEnabled()) {
 						log.warn(String.format("removeParticipants: attachmentPoint: {%s},"
-								+ "No suitable archipelago found, probably because of implending topology update",
+								+ "No suitable archipelago found, probably because of impending topology update",
 								npt));
 					}
 					continue;
@@ -1824,7 +1830,7 @@ public class TopologyInstance {
 				{
 					if (mgIds == null || mgIds.contains(mg.getId()))
 					{
-						mg.removeDevice(device);
+						mg.remove(device.getDeviceKey(), npt);
 						if (mg.isEmpty()) {
 							_removed.add(mg);
 						}

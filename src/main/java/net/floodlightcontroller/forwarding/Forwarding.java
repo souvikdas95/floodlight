@@ -57,6 +57,7 @@ import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.protocol.oxm.OFOxms;
 import org.projectfloodlight.openflow.types.*;
 import org.python.google.common.collect.ImmutableList;
+import org.python.google.common.collect.ImmutableSet;
 import org.python.google.common.collect.Maps;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -594,7 +595,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 	            		flowSetIdRegistry.registerFlowSetId(npt, flowSetId);
 	            	}
 	            	DatapathId dstSwId = path.getId().getDst();
-            		for (OFPort port: mPath.getAttachmentPoints(dstSwId)) {
+            		for (OFPort port: mPath.getEdgePorts(dstSwId)) {
             			NodePortTuple npt = new NodePortTuple(dstSwId, port);
             			flowSetIdRegistry.registerFlowSetId(npt, flowSetId);
             		}
@@ -641,9 +642,9 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         List<DatapathId> swIdList = new LinkedList<DatapathId>();
         
         /*
-         *  Map inPort and outPorts per switch from switchPortList
+         *  Map inPort, outPorts and attachmentPoint (edge) ports
+         *  per switch from switchPortList per path in mPath
          */
-        swInPort.put(srcSwId, srcPort);
         for (Path path: mPath.getAllPaths()) {
         	List<NodePortTuple> switchPortList = path.getPath();
         	for (int index = 0; index < switchPortList.size() - 1; index += 2) {
@@ -665,19 +666,21 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         		}
         		outPorts.add(outputPort);
         		
-        		// Add to swList
+        		// Add to swList (O(1))
         		swIdList.add(0, inputSwId);	
             }
         	
-        	// Add attachmentPoints to outPorts
+        	// Add attachmentPoint (edge) ports to swOutPorts
         	DatapathId dstSwId = path.getId().getDst();
-    		Set<OFPort> outPorts = swOutPorts.get(dstSwId);
-    		if (outPorts == null) {
-    			outPorts = new HashSet<OFPort>();
-    			swOutPorts.put(dstSwId, outPorts);
-    		}
-    		outPorts.addAll(mPath.getAttachmentPoints(dstSwId));
+        	Set<OFPort> outPorts = swOutPorts.get(dstSwId);
+        	if (outPorts == null) {
+        		outPorts = new HashSet<OFPort>();
+        		swOutPorts.put(dstSwId, outPorts);
+        	}
+        	outPorts.addAll(mPath.getEdgePorts(dstSwId));
         }
+        swInPort.put(srcSwId, srcPort);
+        swIdList.add(srcSwId);
         
         /*
          *  Both swInPort and swOutPorts must have same keyset of switches
@@ -702,33 +705,41 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
                 return false;
             }
         	
-            // Get inPort and outPorts of the switch
+            // Get inPort, apPorts, outPorts of the switch
             OFPort inPort = swInPort.get(swId);
             Set<OFPort> outPorts = swOutPorts.get(swId);
-            Boolean isSrcSw = swId.equals(srcSwId);
+            boolean isSrcSw = swId.equals(srcSwId);
+            
+            if (log.isTraceEnabled()) {
+                log.trace(String.format("pushMulticastPath: Switch: {s%d}, inPort: {%s}, outPorts: {%s}", 
+                		sw.getId().getLong(), inPort, outPorts));
+            }
             
             // Process
-            MacAddress gatewayMac = MacAddress.NONE;
-            Optional<VirtualGatewayInstance> gatewayInstance = getGatewayInstance(swId);
-            if (!gatewayInstance.isPresent()) {
-            	for (OFPort outPort: outPorts) {
-            		MacAddress newGatewayMac = MacAddress.NONE;
-            		Optional<VirtualGatewayInstance> newGatewayInstance = 
-            				getGatewayInstance(new NodePortTuple(swId, outPort));
-            		if (newGatewayInstance.isPresent()) {
-            			newGatewayMac = newGatewayInstance.get().getGatewayMac();
-            		}
-        			pushMulticastFlow(sw, isSrcSw, inPort, new HashSet<OFPort>(Arrays.asList(outPort)), 
-        					match, pi, cookie, cntx, requestFlowRemovedNotification, flowModCommand, 
-        					newGatewayMac);
-        			outPorts.remove(outPort);
-            	}
+            Optional<VirtualGatewayInstance> simpleGatewayInstance = getGatewayInstance(swId);
+            if (simpleGatewayInstance.isPresent()) {
+            	MacAddress simpleGatewayMac = simpleGatewayInstance.get().getGatewayMac();
+            	pushMulticastFlow(sw, inPort, outPorts, isSrcSw, match, pi, cookie, cntx, 
+	        			requestFlowRemovedNotification, flowModCommand, simpleGatewayMac);
+	        	outPorts.clear();
             }
             else {
-            	gatewayMac = gatewayInstance.get().getGatewayMac();
+            	for (OFPort outPort: outPorts) {
+            		Optional<VirtualGatewayInstance> gatewayInstance = 
+            				getGatewayInstance(new NodePortTuple(swId, outPort));
+            		if (gatewayInstance.isPresent()) {
+            			MacAddress gatewayMac = gatewayInstance.get().getGatewayMac();
+            			pushMulticastFlow(sw, inPort, new HashSet<OFPort>(Arrays.asList(outPort)), 
+            					isSrcSw, match, pi, cookie, cntx, requestFlowRemovedNotification, 
+            					flowModCommand, gatewayMac);
+            			outPorts.remove(outPort);
+            		}
+            	}
             }
-            pushMulticastFlow(sw, isSrcSw, inPort, outPorts, match, pi, cookie, 
-        			cntx, requestFlowRemovedNotification, flowModCommand, gatewayMac);
+	        if (!outPorts.isEmpty()) {
+	        	pushMulticastFlow(sw, inPort, outPorts, isSrcSw, match, pi, cookie, cntx, 
+	        			requestFlowRemovedNotification, flowModCommand, MacAddress.NONE);
+	        }
         }
 
         return true;
@@ -743,6 +754,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
      * @param isSrcSw Push PacketOut of the switch
      * @param inPort Input port of the switch
      * @param outPorts Output ports of the switch
+     * @param isSrcSw If sw is the flow source
      * @param match OpenFlow fields to match on
      * @param pi PacketIn packet
      * @param cookie The cookie to set in each flow_mod
@@ -751,13 +763,18 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
      *        send a flow mod removal notification when the flow mod expires
      * @param flowModCommand flow mod. command to use, e.g. OFFlowMod.OFPFC_ADD,
      *        OFFlowMod.OFPFC_MODIFY etc.
+     * @param gatewayMac MacAddress of Gateway Interface
      *        
      * @return
      */
-    private void pushMulticastFlow(IOFSwitch sw, boolean isSrcSw, OFPort inPort, Set<OFPort> outPorts, 
-    		Match match, OFPacketIn pi, U64 cookie, FloodlightContext cntx, boolean requestFlowRemovedNotification, 
-    		OFFlowModCommand flowModCommand, MacAddress gatewayMac) {
-
+    private void pushMulticastFlow(IOFSwitch sw, OFPort inPort, Set<OFPort> outPorts, 
+    		boolean isSrcSw, Match match, OFPacketIn pi, U64 cookie, FloodlightContext cntx, 
+    		boolean requestFlowRemovedNotification, OFFlowModCommand flowModCommand, 
+    		MacAddress gatewayMac) {
+    	
+    	/* 
+    	 * Prepare FlowMod 
+    	 */
         OFFlowMod.Builder fmb;
         switch (flowModCommand) {
         case ADD:
@@ -808,7 +825,8 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         .setCookie(cookie)
         .setPriority(FLOWMOD_DEFAULT_PRIORITY);
         
-        if (!gatewayMac.equals(MacAddress.NONE)) {
+        if (gatewayMac != null &&
+        		!gatewayMac.equals(MacAddress.NONE)) {
     		fmb.setXid(pi.getXid());
             switch (factoryVersion) {
                 case OF_10:
@@ -828,43 +846,25 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         
         fmb.setActions(actions);
         
-        /* Configure for particular switch pipeline */
+        /* 
+         * Configure for particular switch pipeline 
+         */
         if (factoryVersion.compareTo(OFVersion.OF_10) != 0) {
             fmb.setTableId(FLOWMOD_DEFAULT_TABLE_ID);
         }
-                    
-        if (log.isTraceEnabled()) {
-            log.trace("Pushing Multicast Route flowmod sw={} " +
-                    "inPort={} outPorts={}",
-                    new Object[] {sw,
-                            inPort, outPorts});
-        }
         
 		/*  
-		 * Push multicast packet out the first hop switch.
-		 * Use the buffered packet at the switch, if there's one stored.
+		 * Push multicast packet out of first hop (source) switch
 		 */
     	if (isSrcSw &&
     			!fmb.getCommand().equals(OFFlowModCommand.DELETE) &&
                 !fmb.getCommand().equals(OFFlowModCommand.DELETE_STRICT)) {
-        	if (log.isDebugEnabled()) {
-        		log.debug("Push multicast packet out the first hop switch");
-        	}
-        	
-        	/* Change SourceMac to GatewayMac in PacketIn if Gateway is present */
-        	if (!gatewayMac.equals(MacAddress.NONE)) {
-        		Ethernet eth = IFloodlightProviderService.bcStore
-        			.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
-    			eth.setSourceMACAddress(gatewayMac);
-            	OFPacketIn.Builder pib = pi.createBuilder();
-            	pib.setData(eth.serialize());
-            	pi = pib.build();
-        	}
-        		
-        	pushMulticastPacket(sw, pi, outPorts, true, cntx);
+    		pushMulticastPacket(sw, pi, outPorts, cntx, gatewayMac);
         }
-        
-    	/*  Install flowmod in the switch */
+    	
+    	/* 
+    	 * Install flowmod in the switch 
+    	 */
         if (OFDPAUtils.isOFDPASwitch(sw)) {
         	List<Map.Entry<VlanVid, OFPort>> outVlanPortTable = new ArrayList<Map.Entry<VlanVid, OFPort>>();
         	for (OFPort outPort: outPorts) {
@@ -876,7 +876,8 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
                     FLOWMOD_DEFAULT_IDLE_TIMEOUT,
                     fmb.getMatch(), 
                     outVlanPortTable); // TODO how to determine output VLAN for lookup of L2 interface group
-        } else {
+        }
+        else {
             messageDamper.write(sw, fmb.build());
         }
 	}
@@ -889,22 +890,17 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
      * @param sw switch that generated the packet-in, and from which packet-out is sent
      * @param pi packet-in
      * @param outports output ports
-     * @param useBufferedPacket use the packet buffered at the switch, if possible
      * @param cntx context of the packet
+     * @param gatewayMac MacAddress of the Gateway Interface
      * 
      * @return
      */
     protected void pushMulticastPacket(IOFSwitch sw, OFPacketIn pi, Set<OFPort> outports, 
-    		boolean useBufferedPacket, FloodlightContext cntx) {
-        if (pi == null) {
+    		FloodlightContext cntx, MacAddress gatewayMac) {
+        if (pi == null || outports.isEmpty()) {
             return;
         }
         
-        if (log.isTraceEnabled()) {
-            log.trace("PacketOut srcSwitch={} pi={}",
-                    new Object[] {sw, pi});
-        }
-
         OFPacketOut.Builder pob = sw.getOFFactory().buildPacketOut();
         List<OFAction> actions = new ArrayList<>();
         for (OFPort outport: outports) {
@@ -912,12 +908,23 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         }
         pob.setActions(actions);
 
-        /* Use packet in buffer if there is a buffer ID set */
-        if (useBufferedPacket) {
-            pob.setBufferId(pi.getBufferId()); /* will be NO_BUFFER if there isn't one */
-        } else {
-            pob.setBufferId(OFBufferId.NO_BUFFER);
-        }
+        /* 
+         * If gateway interface is present, then force NO_BUFFER
+         * and change sourceMac to gatewayMac in PacketIn.
+         */
+    	if (gatewayMac.equals(MacAddress.NONE)) {
+    		pob.setBufferId(pi.getBufferId()); /* will be NO_BUFFER if there isn't one */
+    	}
+    	else {
+    		pob.setBufferId(OFBufferId.NO_BUFFER);
+    		
+    		Ethernet eth = IFloodlightProviderService.bcStore
+    			.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
+			eth.setSourceMACAddress(gatewayMac);
+        	OFPacketIn.Builder pib = pi.createBuilder();
+        	pib.setData(eth.serialize());
+        	pi = pib.build();
+    	}
 
         if (pob.getBufferId().equals(OFBufferId.NO_BUFFER)) {
             byte[] packetData = pi.getData();
