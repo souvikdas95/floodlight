@@ -97,7 +97,10 @@ public class IGMPManager implements IFloodlightModule, IOFMessageListener, IMult
 
 	@Override
 	public boolean isCallbackOrderingPrereq(OFType type, String name) {
-		return (type.equals(OFType.PACKET_IN) && (name.equals("topology")));
+		return (type.equals(OFType.PACKET_IN) && 
+				(name.equals("linkdiscovery") || 
+						name.equals("topology") || 
+						name.equals("devicemanager")));
 	}
 
 	@Override
