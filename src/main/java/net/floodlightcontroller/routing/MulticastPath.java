@@ -23,14 +23,14 @@ import java.util.Set;
 public class MulticastPath implements Comparable<MulticastPath> {
     protected MulticastPathId id;
     protected Map<DatapathId, Path> mgSwIdPathMap;	// Map of mgSwId and Path it belongs to
-    protected Map<DatapathId, Set<OFPort>> mgSwIdAPMap;	// Map of mgSwId and Set of attachmentPointPorts
+    protected Map<DatapathId, Set<OFPort>> mgSwIdEdgePortsMap;	// Map of mgSwId and Set of attachmentPointPorts
     protected int pathIndex;
 
     public MulticastPath(MulticastPathId id) {
         super();
         this.id = id;  
         this.mgSwIdPathMap = new HashMap<DatapathId, Path>();
-        this.mgSwIdAPMap = new HashMap<DatapathId, Set<OFPort>>();
+        this.mgSwIdEdgePortsMap = new HashMap<DatapathId, Set<OFPort>>();
         this.pathIndex = 0; // useful if multipath multicast routing available
     }
 
@@ -38,7 +38,7 @@ public class MulticastPath implements Comparable<MulticastPath> {
         super();
         this.id = new MulticastPathId(src, mgId);
         this.mgSwIdPathMap = new HashMap<DatapathId, Path>();
-        this.mgSwIdAPMap = new HashMap<DatapathId, Set<OFPort>>();
+        this.mgSwIdEdgePortsMap = new HashMap<DatapathId, Set<OFPort>>();
         this.pathIndex = 0; // useful if multipath multicast routing available
     }
 
@@ -50,20 +50,20 @@ public class MulticastPath implements Comparable<MulticastPath> {
         this.id = id;
     }
     
-    public void add(DatapathId mgSwId, Set<OFPort> attachmentPointPorts, Path path) {
+    public void add(DatapathId mgSwId, Set<OFPort> edgePorts, Path path) {
     	mgSwIdPathMap.put(mgSwId, path);
-    	mgSwIdAPMap.put(mgSwId, attachmentPointPorts);
+    	mgSwIdEdgePortsMap.put(mgSwId, edgePorts);
     }
     
     public void remove(DatapathId mgSwId) {
     	mgSwIdPathMap.remove(mgSwId);
-    	mgSwIdAPMap.remove(mgSwId);
+    	mgSwIdEdgePortsMap.remove(mgSwId);
     }
     
     public void remove(Path path) {
     	DatapathId mgSwId = path.getId().getDst();
     	mgSwIdPathMap.remove(mgSwId);
-    	mgSwIdAPMap.remove(mgSwId);
+    	mgSwIdEdgePortsMap.remove(mgSwId);
     }
     
     public DatapathId getRoot() {
@@ -91,8 +91,9 @@ public class MulticastPath implements Comparable<MulticastPath> {
     	return mgSwId;
     }
     
-    public Set<OFPort> getAttachmentPoints(DatapathId mgSwId) {
-    	return Collections.unmodifiableSet(mgSwIdAPMap.get(mgSwId));
+    public Set<OFPort> getEdgePorts(DatapathId mgSwId) {
+    	Set<OFPort> result = mgSwIdEdgePortsMap.get(mgSwId);
+    	return (result == null) ? ImmutableSet.of() : Collections.unmodifiableSet(result);
     }
     
     public boolean hasPath(Path path) {

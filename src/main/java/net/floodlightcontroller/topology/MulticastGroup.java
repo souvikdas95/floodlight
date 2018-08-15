@@ -12,7 +12,6 @@ import org.projectfloodlight.openflow.types.OFPort;
 import org.python.google.common.collect.ImmutableSet;
 
 import net.floodlightcontroller.core.types.NodePortTuple;
-import net.floodlightcontroller.devicemanager.IDevice;
 
 /*
  * Must exist per archipelago
@@ -20,129 +19,147 @@ import net.floodlightcontroller.devicemanager.IDevice;
 public class MulticastGroup {
 	
 	// Multicast Group Id
-	private BigInteger mgId;
+	private final BigInteger mgId;
 	
 	// Parent Archipelago (only used for reference & hashCode)
-	private Archipelago archipelago;
+	private final Archipelago archipelago;
 	
-	// Set of Devices that belong to this Multicast Group
-	private Set<IDevice> devices;
+	// Map of devices and participant attachment points in archipelago
+	private Map<Long, Set<NodePortTuple>> devAps;
 	
-	// Map of switches and attachment point to multicast devices
-	private Map<DatapathId, Set<OFPort>> attachmentPoints;
+	// Map of attachment point and participant devices in archipelago
+	private Map<NodePortTuple, Set<Long>> apDevs;
 	
-	// Count of duplicate attachment points
-	private Map<NodePortTuple, Integer> attachmentPointsCount;
+	// Map of switches and edge ports connected to participant devices
+	private Map<DatapathId, Set<OFPort>> swEdgePorts;
 	
 	public MulticastGroup(BigInteger mgId, Archipelago archipelago) {
 		this.mgId = mgId;
 		this.archipelago = archipelago;
-		devices = new HashSet<IDevice>();
-		attachmentPoints = new HashMap<DatapathId, Set<OFPort>>();
-		attachmentPointsCount = new HashMap<NodePortTuple, Integer>();
+		devAps = new HashMap<Long, Set<NodePortTuple>>();
+		apDevs = new HashMap<NodePortTuple, Set<Long>>();
+		swEdgePorts = new HashMap<DatapathId, Set<OFPort>>();
 	}
 	
 	public BigInteger getId() {
 		return mgId;
 	}
 	
-	public void setId(BigInteger mgId) {
-		this.mgId = mgId;
-	}
-	
 	public Archipelago getArchiepelago() {
 		return archipelago;
 	}
 	
-	public void setArchipelago(Archipelago archipelago) {
-		this.archipelago = archipelago;
+	public void add(Long devKey, NodePortTuple ap) {
+		Set<NodePortTuple> nptSet = devAps.get(devKey);
+		if (nptSet == null) {
+			nptSet = new HashSet<NodePortTuple>();
+			devAps.put(devKey, nptSet);
+		}
+		nptSet.add(ap);
+		
+		Set<Long> devSet = apDevs.get(ap);
+		if (devSet == null) {
+			devSet = new HashSet<Long>();
+			apDevs.put(ap, devSet);
+		}
+		devSet.add(devKey);
+		
+		DatapathId swId = ap.getNodeId();
+		OFPort port = ap.getPortId();
+		Set<OFPort> ports = swEdgePorts.get(swId);
+		if (ports == null) {
+			ports = new HashSet<OFPort>();
+			swEdgePorts.put(swId, ports);
+		}
+		ports.add(port);
 	}
 	
-	public void addDevice(IDevice device) {
-		if (!devices.contains(device)) {
-			Set<DatapathId> validSw = archipelago.getSwitches();
-			for (NodePortTuple npt: device.getAttachmentPoints()) {
-				Integer count = attachmentPointsCount.get(npt);
-				if (count == null) {
+	public void remove(Long devKey) {
+		Set<NodePortTuple> nptSet = devAps.get(devKey);
+		if (nptSet != null) {
+			for (NodePortTuple npt: nptSet) {
+				Set<Long> devSet = apDevs.get(npt);
+				devSet.remove(devKey);
+				if (devSet.isEmpty()) {
+					apDevs.remove(npt);
 					DatapathId swId = npt.getNodeId();
-					if (validSw.contains(swId)) {
-						OFPort port = npt.getPortId();
-						Set<OFPort> ports = attachmentPoints.get(swId);
-						if (ports == null) {
-							ports = new HashSet<OFPort>();
-							attachmentPoints.put(swId, ports);
-						}
-						ports.add(port);
+					OFPort port = npt.getPortId();
+					Set<OFPort> ports = swEdgePorts.get(swId);
+					ports.remove(port);
+					if (ports.isEmpty()) {
+						swEdgePorts.remove(swId);
 					}
-					attachmentPointsCount.put(npt, 1);
-				}
-				else {
-					attachmentPointsCount.put(npt, count + 1);
 				}
 			}
-			devices.add(device);
+			devAps.remove(devKey);
 		}
 	}
 	
-	public void removeDevice(IDevice device) {
-		if (devices.contains(device)) {
-			for (NodePortTuple npt: device.getAttachmentPoints()) {
-				Integer count = attachmentPointsCount.get(npt);
-				if (count <= 1) {
+	public void remove(Long devKey, NodePortTuple npt) {
+		Set<NodePortTuple> nptSet = devAps.get(devKey);
+		if (nptSet != null) {
+			if (nptSet.contains(npt)) {
+				Set<Long> devSet = apDevs.get(npt);
+				devSet.remove(devKey);
+				if (devSet.isEmpty()) {
+					apDevs.remove(npt);
 					DatapathId swId = npt.getNodeId();
-					Set<OFPort> ports = attachmentPoints.get(swId);
-					if (ports != null) {
-						OFPort port = npt.getPortId();
-						ports.remove(port);
-						if (ports.isEmpty()) {
-							attachmentPoints.remove(swId);
-						}
+					OFPort port = npt.getPortId();
+					Set<OFPort> ports = swEdgePorts.get(swId);
+					ports.remove(port);
+					if (ports.isEmpty()) {
+						swEdgePorts.remove(swId);
 					}
-					attachmentPointsCount.remove(npt);
 				}
-				else {
-					attachmentPointsCount.put(npt, count - 1);
-				}
+				nptSet.remove(npt);
 			}
-			devices.remove(device);
+			if (nptSet.isEmpty()) {
+				devAps.remove(devKey);
+			}
 		}
 	}
 	
-	public boolean hasDevice(IDevice device) {
-		return devices.contains(device);
-	}
-	
-	public Set<IDevice> getDevices() {
-		return Collections.unmodifiableSet(devices);
-	}
-	
-	public boolean hasAttachmentPoint(DatapathId swId, OFPort port) {
-		return hasAttachmentPoint(new NodePortTuple(swId, port));
+	public boolean hasDevice(Long devKey) {
+		return devAps.keySet().contains(devKey);
 	}
 	
 	public boolean hasAttachmentPoint(NodePortTuple npt) {
-		return attachmentPointsCount.containsKey(npt);
+		return apDevs.keySet().contains(npt);
 	}
 	
-	public Set<OFPort> getAttachmentPoints(DatapathId swId) {
-		Set<OFPort> result = attachmentPoints.get(swId);
-		return (result == null) ? ImmutableSet.of() : Collections.unmodifiableSet(result);
+	public Set<Long> getAllDevices() {
+		return Collections.unmodifiableSet(devAps.keySet());
 	}
 	
 	public Set<NodePortTuple> getAllAttachmentPoints() {
-		return Collections.unmodifiableSet(attachmentPointsCount.keySet());
+		return Collections.unmodifiableSet(apDevs.keySet());
 	}
 	
-	public Set<DatapathId> getSwitches() {
-		return Collections.unmodifiableSet(attachmentPoints.keySet());
+	public Set<Long> getDevices(NodePortTuple npt) {
+		Set<Long> result = apDevs.get(npt);
+		return (result == null) ? ImmutableSet.of() : Collections.unmodifiableSet(result);
+	}
+	
+	public Set<NodePortTuple> getAttachmentPoints(Long devKey) {
+		Set<NodePortTuple> result = devAps.get(devKey);
+		return (result == null) ? ImmutableSet.of() : Collections.unmodifiableSet(result);
 	}
 	
 	public boolean hasSwitch(DatapathId swId) {
-		return attachmentPoints.containsKey(swId);
+		return swEdgePorts.containsKey(swId);
+	}
+	
+	public Set<DatapathId> getSwitches() {
+		return Collections.unmodifiableSet(swEdgePorts.keySet());
+	}
+	
+	public Set<OFPort> getEdgePorts(DatapathId swId) {
+		Set<OFPort> result = swEdgePorts.get(swId);
+		return (result == null) ? ImmutableSet.of() : Collections.unmodifiableSet(result);
 	}
 	
 	public boolean isEmpty() {
-		return devices.isEmpty();
+		return devAps.isEmpty();
 	}
 	
     @Override
