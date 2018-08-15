@@ -1,6 +1,7 @@
 package net.floodlightcontroller.multicasting.internal;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,22 +34,20 @@ public class ParticipantTable {
 		}
 		
 		// Add to Member Set
-		if (!mcastToDeviceMap.containsKey(mcastAddress)) {
-			mcastToDeviceMap.put(mcastAddress, ConcurrentHashMap.newKeySet());
-		}
 		Set<IDevice> memberSet = mcastToDeviceMap.get(mcastAddress);
-		if (!memberSet.contains(device)) {
-			memberSet.add(device);
+		if (memberSet == null) {
+			memberSet = new HashSet<IDevice>();
+			mcastToDeviceMap.put(mcastAddress, memberSet);
 		}
+		memberSet.add(device);
 		
 		// Add to Group Set
-		if (!deviceToMcastMap.containsKey(device)) {
-			deviceToMcastMap.put(device, ConcurrentHashMap.newKeySet());
-		}
 		Set<IPAddress<?>> groupSet = deviceToMcastMap.get(device);
-		if (!groupSet.contains(mcastAddress)) {
-			groupSet.add(mcastAddress);
+		if (groupSet == null) {
+			groupSet = new HashSet<IPAddress<?>>();
+			deviceToMcastMap.put(device, groupSet);
 		}
+		groupSet.add(mcastAddress);
 	}
 	
 	public void remove(IPAddress<?> mcastAddress, IDevice device) {
@@ -57,24 +56,20 @@ public class ParticipantTable {
 		}
 		
 		// Remove from Member Set
-		if (mcastToDeviceMap.containsKey(mcastAddress)) {
-			Set<IDevice> memberSet  = mcastToDeviceMap.get(mcastAddress);
-			if (memberSet.contains(device)) {
-				memberSet.remove(device);
-				if (memberSet.isEmpty()) {
-					mcastToDeviceMap.remove(mcastAddress);
-				}
+		Set<IDevice> memberSet  = mcastToDeviceMap.get(mcastAddress);
+		if (memberSet != null) {
+			memberSet.remove(device);
+			if (memberSet.isEmpty()) {
+				mcastToDeviceMap.remove(mcastAddress);
 			}
 		}
 		
 		// Remove from Group Set
-		if (deviceToMcastMap.containsKey(device)) {
-			Set<IPAddress<?>> groupSet = deviceToMcastMap.get(device);
-			if (groupSet.contains(mcastAddress)) {
-				groupSet.remove(mcastAddress);
-				if (groupSet.isEmpty()) {
-					deviceToMcastMap.remove(device);
-				}
+		Set<IPAddress<?>> groupSet = deviceToMcastMap.get(device);
+		if (groupSet != null) {
+			groupSet.remove(mcastAddress);
+			if (groupSet.isEmpty()) {
+				deviceToMcastMap.remove(device);
 			}
 		}
 	}
@@ -83,6 +78,7 @@ public class ParticipantTable {
 		if (mcastAddress == null || device == null) {
 			return false;
 		}
+		
 		if (mcastToDeviceMap.containsKey(mcastAddress) && 
 				deviceToMcastMap.containsKey(device)) {
 			return true;
@@ -94,24 +90,18 @@ public class ParticipantTable {
 		if (mcastAddress == null) {
 			return ImmutableSet.of();
 		}
-		if (mcastToDeviceMap.containsKey(mcastAddress)) {
-			Set<IDevice> memberSet = ConcurrentHashMap.newKeySet();
-			memberSet.addAll(mcastToDeviceMap.get(mcastAddress));
-			return Collections.unmodifiableSet(memberSet);
-		}
-		return ImmutableSet.of();
+		
+		Set<IDevice> memberSet = mcastToDeviceMap.get(mcastAddress);
+		return (memberSet == null) ? ImmutableSet.of() : Collections.unmodifiableSet(memberSet);
 	}
 	
 	public Set<IPAddress<?>> getGroups(IDevice device) {
 		if (device == null) {
 			return ImmutableSet.of();
 		}
-		if (deviceToMcastMap.containsKey(device)) {
-			Set<IPAddress<?>> groupSet = ConcurrentHashMap.newKeySet();
-			groupSet.addAll(deviceToMcastMap.get(device));
-			return Collections.unmodifiableSet(groupSet);
-		}
-		return ImmutableSet.of();
+		
+		Set<IPAddress<?>> groupSet = deviceToMcastMap.get(device);
+		return (groupSet == null) ? ImmutableSet.of() : Collections.unmodifiableSet(groupSet);
 	}
 	
 	public Set<IDevice> getAllMembers() {
@@ -126,6 +116,7 @@ public class ParticipantTable {
 		if (device == null) {
 			return false;
 		}
+		
 		return deviceToMcastMap.containsKey(device);
 	}
 	
@@ -133,6 +124,7 @@ public class ParticipantTable {
 		if (mcastAddress == null) {
 			return false;
 		}
+		
 		return mcastToDeviceMap.containsKey(mcastAddress);
 	}
 	
@@ -140,8 +132,9 @@ public class ParticipantTable {
 		if (mcastAddress == null) {
 			return;
 		}
-		if (mcastToDeviceMap.containsKey(mcastAddress)) {
-			Set<IDevice> memberSet = mcastToDeviceMap.get(mcastAddress);
+		
+		Set<IDevice> memberSet = mcastToDeviceMap.get(mcastAddress);
+		if (memberSet != null) {
 			for(IDevice device: memberSet) {
 				remove(mcastAddress, device);
 			}
@@ -152,8 +145,9 @@ public class ParticipantTable {
 		if (device == null) {
 			return;
 		}
-		if (deviceToMcastMap.containsKey(device)) {
-			Set<IPAddress<?>> groupSet = deviceToMcastMap.get(device);			
+		
+		Set<IPAddress<?>> groupSet = deviceToMcastMap.get(device);
+		if (groupSet != null) {	
 			for(IPAddress<?> mcastAddress: groupSet) {
 				remove(mcastAddress, device);
 			}
