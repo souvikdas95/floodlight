@@ -1820,7 +1820,7 @@ public class TopologyInstance {
 				if (a == null) {
 					if (log.isWarnEnabled()) {
 						log.warn(String.format("removeParticipants: attachmentPoint: {%s},"
-								+ "No suitable archipelago found, probably because of impending topology update",
+								+ "No suitable archipelago found!",
 								npt));
 					}
 					continue;
