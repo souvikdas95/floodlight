@@ -2,6 +2,7 @@ package net.floodlightcontroller.topology;
 
 import java.math.BigInteger;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -55,14 +56,14 @@ public class MulticastGroup {
 		
 		Set<NodePortTuple> nptSet = devAps.get(devKey);
 		if (nptSet == null) {
-			nptSet = ConcurrentHashMap.newKeySet();
+			nptSet = new HashSet<NodePortTuple>();
 			devAps.put(devKey, nptSet);
 		}
 		nptSet.add(ap);
 		
 		Set<Long> devSet = apDevs.get(ap);
 		if (devSet == null) {
-			devSet = ConcurrentHashMap.newKeySet();
+			devSet = new HashSet<Long>();
 			apDevs.put(ap, devSet);
 		}
 		devSet.add(devKey);
@@ -71,7 +72,7 @@ public class MulticastGroup {
 		OFPort port = ap.getPortId();
 		Set<OFPort> ports = swEdgePorts.get(swId);
 		if (ports == null) {
-			ports = ConcurrentHashMap.newKeySet();
+			ports = new HashSet<OFPort>();
 			swEdgePorts.put(swId, ports);
 		}
 		ports.add(port);

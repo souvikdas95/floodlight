@@ -14,7 +14,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.HashMap;
 
 @JsonSerialize(using=PathSerializer.class)
 public class MulticastPath implements Comparable<MulticastPath> {
@@ -27,16 +27,16 @@ public class MulticastPath implements Comparable<MulticastPath> {
     public MulticastPath(MulticastPathId id) {
         super();
         this.id = id;  
-        this.mgSwIdPathMap = new ConcurrentHashMap<DatapathId, Path>();
-        this.mgSwIdEdgePortsMap = new ConcurrentHashMap<DatapathId, Set<OFPort>>();
+        this.mgSwIdPathMap = new HashMap<DatapathId, Path>();
+        this.mgSwIdEdgePortsMap = new HashMap<DatapathId, Set<OFPort>>();
         this.pathIndex = 0; // useful if multipath multicast routing available
     }
     
     public MulticastPath(DatapathId src, BigInteger mgId) {
         super();
         this.id = new MulticastPathId(src, mgId);
-        this.mgSwIdPathMap = new ConcurrentHashMap<DatapathId, Path>();
-        this.mgSwIdEdgePortsMap = new ConcurrentHashMap<DatapathId, Set<OFPort>>();
+        this.mgSwIdPathMap = new HashMap<DatapathId, Path>();
+        this.mgSwIdEdgePortsMap = new HashMap<DatapathId, Set<OFPort>>();
         this.pathIndex = 0; // useful if multipath multicast routing available
     }
     
