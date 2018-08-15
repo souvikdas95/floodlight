@@ -2,10 +2,9 @@ package net.floodlightcontroller.topology;
 
 import java.math.BigInteger;
 import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.projectfloodlight.openflow.types.DatapathId;
 import org.projectfloodlight.openflow.types.OFPort;
@@ -25,20 +24,20 @@ public class MulticastGroup {
 	private final Archipelago archipelago;
 	
 	// Map of devices and participant attachment points in archipelago
-	private Map<Long, Set<NodePortTuple>> devAps;
+	private final Map<Long, Set<NodePortTuple>> devAps;
 	
 	// Map of attachment point and participant devices in archipelago
-	private Map<NodePortTuple, Set<Long>> apDevs;
+	private final Map<NodePortTuple, Set<Long>> apDevs;
 	
 	// Map of switches and edge ports connected to participant devices
-	private Map<DatapathId, Set<OFPort>> swEdgePorts;
+	private final Map<DatapathId, Set<OFPort>> swEdgePorts;
 	
 	public MulticastGroup(BigInteger mgId, Archipelago archipelago) {
 		this.mgId = mgId;
 		this.archipelago = archipelago;
-		devAps = new HashMap<Long, Set<NodePortTuple>>();
-		apDevs = new HashMap<NodePortTuple, Set<Long>>();
-		swEdgePorts = new HashMap<DatapathId, Set<OFPort>>();
+		devAps = new ConcurrentHashMap<Long, Set<NodePortTuple>>();
+		apDevs = new ConcurrentHashMap<NodePortTuple, Set<Long>>();
+		swEdgePorts = new ConcurrentHashMap<DatapathId, Set<OFPort>>();
 	}
 	
 	public BigInteger getId() {
@@ -50,16 +49,20 @@ public class MulticastGroup {
 	}
 	
 	public void add(Long devKey, NodePortTuple ap) {
+		if (devKey == null || ap == null) {
+			return;
+		}
+		
 		Set<NodePortTuple> nptSet = devAps.get(devKey);
 		if (nptSet == null) {
-			nptSet = new HashSet<NodePortTuple>();
+			nptSet = ConcurrentHashMap.newKeySet();
 			devAps.put(devKey, nptSet);
 		}
 		nptSet.add(ap);
 		
 		Set<Long> devSet = apDevs.get(ap);
 		if (devSet == null) {
-			devSet = new HashSet<Long>();
+			devSet = ConcurrentHashMap.newKeySet();
 			apDevs.put(ap, devSet);
 		}
 		devSet.add(devKey);
@@ -68,13 +71,17 @@ public class MulticastGroup {
 		OFPort port = ap.getPortId();
 		Set<OFPort> ports = swEdgePorts.get(swId);
 		if (ports == null) {
-			ports = new HashSet<OFPort>();
+			ports = ConcurrentHashMap.newKeySet();
 			swEdgePorts.put(swId, ports);
 		}
 		ports.add(port);
 	}
 	
 	public void remove(Long devKey) {
+		if (devKey == null) {
+			return;
+		}
+		
 		Set<NodePortTuple> nptSet = devAps.get(devKey);
 		if (nptSet != null) {
 			for (NodePortTuple npt: nptSet) {
@@ -96,6 +103,10 @@ public class MulticastGroup {
 	}
 	
 	public void remove(Long devKey, NodePortTuple npt) {
+		if (devKey == null || npt == null) {
+			return;
+		}
+		
 		Set<NodePortTuple> nptSet = devAps.get(devKey);
 		if (nptSet != null) {
 			if (nptSet.contains(npt)) {
@@ -120,10 +131,18 @@ public class MulticastGroup {
 	}
 	
 	public boolean hasDevice(Long devKey) {
+		if (devKey == null) {
+			return false;
+		}
+		
 		return devAps.keySet().contains(devKey);
 	}
 	
 	public boolean hasAttachmentPoint(NodePortTuple npt) {
+		if (npt == null) {
+			return false;
+		}
+		
 		return apDevs.keySet().contains(npt);
 	}
 	
@@ -136,16 +155,28 @@ public class MulticastGroup {
 	}
 	
 	public Set<Long> getDevices(NodePortTuple npt) {
+		if (npt == null) {
+			return ImmutableSet.of();
+		}
+		
 		Set<Long> result = apDevs.get(npt);
 		return (result == null) ? ImmutableSet.of() : Collections.unmodifiableSet(result);
 	}
 	
 	public Set<NodePortTuple> getAttachmentPoints(Long devKey) {
+		if (devKey == null) {
+			return ImmutableSet.of();
+		}
+		
 		Set<NodePortTuple> result = devAps.get(devKey);
 		return (result == null) ? ImmutableSet.of() : Collections.unmodifiableSet(result);
 	}
 	
 	public boolean hasSwitch(DatapathId swId) {
+		if (swId == null) {
+			return false;
+		}
+		
 		return swEdgePorts.containsKey(swId);
 	}
 	
@@ -154,6 +185,10 @@ public class MulticastGroup {
 	}
 	
 	public Set<OFPort> getEdgePorts(DatapathId swId) {
+		if (swId == null) {
+			return ImmutableSet.of();
+		}
+		
 		Set<OFPort> result = swEdgePorts.get(swId);
 		return (result == null) ? ImmutableSet.of() : Collections.unmodifiableSet(result);
 	}
