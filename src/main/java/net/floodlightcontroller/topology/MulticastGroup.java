@@ -5,7 +5,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.HashMap;
 
 import org.projectfloodlight.openflow.types.DatapathId;
 import org.projectfloodlight.openflow.types.OFPort;
@@ -36,9 +36,9 @@ public class MulticastGroup {
 	public MulticastGroup(BigInteger mgId, Archipelago archipelago) {
 		this.mgId = mgId;
 		this.archipelago = archipelago;
-		devAps = new ConcurrentHashMap<Long, Set<NodePortTuple>>();
-		apDevs = new ConcurrentHashMap<NodePortTuple, Set<Long>>();
-		swEdgePorts = new ConcurrentHashMap<DatapathId, Set<OFPort>>();
+		devAps = new HashMap<Long, Set<NodePortTuple>>();
+		apDevs = new HashMap<NodePortTuple, Set<Long>>();
+		swEdgePorts = new HashMap<DatapathId, Set<OFPort>>();
 	}
 	
 	public BigInteger getId() {

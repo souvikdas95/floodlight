@@ -1468,10 +1468,12 @@ public class TopologyInstance {
      * @return
      */
     private void identifyMutlticastGroups() {
-		for (IPAddress<?> mcastAddress: TopologyManager.multicastingService.getAllParticipantGroups()) {
+		for (IPAddress<?> mcastAddress: TopologyManager.multicastService.getAllParticipantGroups()) {
 			BigInteger mgId = MulticastUtils.MgIdFromMcastIP(mcastAddress);
-			Set<IDevice> devices = TopologyManager.multicastingService.getParticipantMembers(mcastAddress);
-			addParticipants(mgId, devices, false);
+			Set<IDevice> devices = TopologyManager.multicastService.getParticipantMembers(mcastAddress);
+			for (IDevice device: devices) {
+				addParticipant(mgId, device, false);
+			}
 		}
     }
     
@@ -1705,31 +1707,36 @@ public class TopologyInstance {
      * 
      * @return
      */
-    protected void addParticipants(BigInteger mgId, Set<IDevice> devices, boolean recomputePaths) {
+    protected void addParticipant(BigInteger mgId, IDevice device, boolean recomputePaths) {
 		Set<MulticastGroup> updated = new HashSet<MulticastGroup>();
-		for (IDevice device: devices) {
-			for (NodePortTuple npt: device.getAttachmentPoints()) {
-				DatapathId swId = npt.getNodeId();
-				OFPort port = npt.getPortId();
-				if (!isEdge(swId, port)) {
-					continue;
+		for (NodePortTuple npt: device.getAttachmentPoints()) {
+			DatapathId swId = npt.getNodeId();
+			OFPort port = npt.getPortId();
+			if (!isEdge(swId, port)) {
+				continue;
+			}
+			Archipelago a = getArchipelago(swId);
+			if (a == null) {
+				if (log.isErrorEnabled()) {
+					log.error(String.format("addParticipants: mgId: {%s}, attachmentPoint: {%s},"
+							+ "No suitable archipelago found!",
+							mgId, npt));
 				}
-				Archipelago a = getArchipelago(swId);
-				if (a == null) {
-					if (log.isErrorEnabled()) {
-						log.error(String.format("addParticipants: mgId: {%s}, attachmentPoint: {%s},"
-								+ "No suitable archipelago found!",
-								mgId, npt));
-					}
-					continue;
-				}
-				MulticastGroup mg = a.getMulticastGroup(mgId);
-				if (mg == null) {
-					mg = new MulticastGroup(mgId, a);
-					a.addMulticastGroup(mg);
-				}
+				continue;
+			}
+			MulticastGroup mg = a.getMulticastGroup(mgId);
+			if (mg == null) {
+				mg = new MulticastGroup(mgId, a);
+				a.addMulticastGroup(mg);
 				mg.add(device.getDeviceKey(), npt);
 				updated.add(mg);
+			}
+			else {
+				Set<NodePortTuple> storedAp = mg.getAttachmentPoints(device.getDeviceKey());
+				if (storedAp == null || !storedAp.contains(npt)) {
+					mg.add(device.getDeviceKey(), npt);
+					updated.add(mg);
+				}
 			}
 		}
 		if (recomputePaths) {
@@ -1748,32 +1755,17 @@ public class TopologyInstance {
      * 
      * @param mgId
      * @param devices
-     * @param recomputePaths
      * 
      * @return
      */
-	protected void removeParticipants(BigInteger mgId, Set<IDevice> devices, boolean recomputePaths) {
+	protected void removeParticipant(BigInteger mgId, IDevice device) {
 		Set<MulticastGroup> updated = new HashSet<MulticastGroup>();
 		Set<MulticastGroup> removed = new HashSet<MulticastGroup>();
-		for (IDevice device: devices) {
-			for (NodePortTuple npt: device.getAttachmentPoints()) {
-				DatapathId swId = npt.getNodeId();
-				OFPort port = npt.getPortId();
-				if (!isEdge(swId, port)) {
-					continue;
-				}
-				Archipelago a = getArchipelago(swId);
-				if (a == null) {
-					if (log.isErrorEnabled()) {
-						log.error(String.format("removeParticipants: mgId: {%s}, attachmentPoint: {%s},"
-								+ "No suitable archipelago found!",
-								mgId, npt));
-					}
-					continue;
-				}
-				MulticastGroup mg = a.getMulticastGroup(mgId);
-				if (mg != null) {
-					mg.remove(device.getDeviceKey(), npt);
+		for (Archipelago a: archipelagos) {
+			MulticastGroup mg = a.getMulticastGroup(mgId);
+			if (mg != null) {
+				if (mg.hasDevice(device.getDeviceKey())) {
+					mg.remove(device.getDeviceKey());
 					if (mg.isEmpty()) {
 						a.removeMulticastGroup(mg);
 						removed.add(mg);
@@ -1784,17 +1776,15 @@ public class TopologyInstance {
 				}
 			}
 		}
-		if (recomputePaths) {
-			clearMulticastPaths(removed);
-			updated.removeAll(removed);
-			computeMulticastPaths(updated);
-		}
+		updated.removeAll(removed);
+		clearMulticastPaths(removed);
+		computeMulticastPaths(updated);
 	}
-
-    /**
+	
+	/**
      * @author Souvik Das (souvikdas95@yahoo.co.in)
      * 
-     * Removes a list of participants from all multicast groups
+     * Updates participants of multicast group
      * 
      * Note: This also considers devices that have attachments points
      *       spread across different archipelagos and also switchports
@@ -1802,56 +1792,63 @@ public class TopologyInstance {
      * 
      * @param mgId
      * @param devices
-     * @param recomputePaths
      * 
      * @return
      */
-	protected void removeParticipants(Set<BigInteger> mgIds, Set<IDevice> devices, boolean recomputePaths) {
+	public void updateParticipant(BigInteger mgId, IDevice device) {
 		Set<MulticastGroup> updated = new HashSet<MulticastGroup>();
 		Set<MulticastGroup> removed = new HashSet<MulticastGroup>();
-		for (IDevice device: devices) {
-			for (NodePortTuple npt: device.getAttachmentPoints()) {
-				DatapathId swId = npt.getNodeId();
-				OFPort port = npt.getPortId();
-				if (!isEdge(swId, port)) {
-					continue;
-				}
-				Archipelago a = getArchipelago(swId);
-				if (a == null) {
-					if (log.isWarnEnabled()) {
-						log.warn(String.format("removeParticipants: attachmentPoint: {%s},"
-								+ "No suitable archipelago found!",
-								npt));
+		for (Archipelago a: archipelagos) {
+			MulticastGroup mg = a.getMulticastGroup(mgId);
+			if (mg != null) {
+				if (mg.hasDevice(device.getDeviceKey())) {
+					mg.remove(device.getDeviceKey());
+					if (mg.isEmpty()) {
+						a.removeMulticastGroup(mg);
+						removed.add(mg);
 					}
-					continue;
-				}
-				Set<MulticastGroup> _removed = new HashSet<MulticastGroup>();
-				for (MulticastGroup mg: a.getMulticastGroups())
-				{
-					if (mgIds == null || mgIds.contains(mg.getId()))
-					{
-						mg.remove(device.getDeviceKey(), npt);
-						if (mg.isEmpty()) {
-							_removed.add(mg);
-						}
-						else {
-							updated.add(mg);
-						}
+					else {
+						updated.add(mg);
 					}
 				}
-				for (MulticastGroup mg: _removed) {
-					a.removeMulticastGroup(mg);
-				}
-				removed.addAll(_removed);
 			}
 		}
-		if (recomputePaths) {
-			clearMulticastPaths(removed);
-			updated.removeAll(removed);
-			computeMulticastPaths(updated);
+		updated.removeAll(removed);
+		for (NodePortTuple npt: device.getAttachmentPoints()) {
+			DatapathId swId = npt.getNodeId();
+			OFPort port = npt.getPortId();
+			if (!isEdge(swId, port)) {
+				continue;
+			}
+			Archipelago a = getArchipelago(swId);
+			if (a == null) {
+				if (log.isErrorEnabled()) {
+					log.error(String.format("addParticipants: mgId: {%s}, attachmentPoint: {%s},"
+							+ "No suitable archipelago found!",
+							mgId, npt));
+				}
+				continue;
+			}
+			MulticastGroup mg = a.getMulticastGroup(mgId);
+			if (mg == null) {
+				mg = new MulticastGroup(mgId, a);
+				a.addMulticastGroup(mg);
+				mg.add(device.getDeviceKey(), npt);
+				updated.add(mg);
+			}
+			else {
+				Set<NodePortTuple> storedAp = mg.getAttachmentPoints(device.getDeviceKey());
+				if (storedAp == null || !storedAp.contains(npt)) {
+					mg.add(device.getDeviceKey(), npt);
+					updated.add(mg);
+				}
+			}
 		}
+		removed.removeAll(updated);
+		clearMulticastPaths(removed);
+		computeMulticastPaths(updated);
 	}
-
+	
     /**
      * @author Souvik Das (souvikdas95@yahoo.co.in)
      * 

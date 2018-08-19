@@ -4,7 +4,8 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.HashMap;
+import java.util.concurrent.Semaphore;
 
 import org.projectfloodlight.openflow.types.IPAddress;
 import org.python.google.common.collect.ImmutableSet;
@@ -12,20 +13,94 @@ import org.python.google.common.collect.ImmutableSet;
 import net.floodlightcontroller.devicemanager.IDevice;
 
 /*
- * Participant table that persists across
- * all topology instances
+ * Participant table that maps b/w Multicast IP and Devices
  */
-public class ParticipantTable {	
+public class ParticipantTable {
 	private final Map<IPAddress<?>, Set<IDevice>> mcastToDeviceMap;
 	private final Map<IDevice, Set<IPAddress<?>>> deviceToMcastMap;
 	
-	public ParticipantTable() {
-		mcastToDeviceMap = new ConcurrentHashMap<IPAddress<?>, Set<IDevice>>();
-		deviceToMcastMap = new ConcurrentHashMap<IDevice, Set<IPAddress<?>>>();
-	}
+	// Reader-Writer Synchronization Class & Object
+	private final class RWSync {
+		private final Semaphore in;
+		private final Semaphore out;
+		private final Semaphore wrt;
+		private int ctrin;
+		private int ctrout;
+		private boolean wait;
+		
+		protected RWSync() {
+			in = new Semaphore(1);
+			out = new Semaphore(1);
+			wrt = new Semaphore(0);
+			ctrin = 0;
+			ctrout = 0;
+			wait = false;
+		}
+		
+		private final void reset() {
+			in.release();
+			out.release();
+			wrt.tryAcquire();
+			ctrin = 0;
+			ctrout = 0;
+			wait = false;
+		}
+		
+		protected final void readLock() {
+			try {
+				in.acquire();
+				ctrin++;
+				in.release();
+			}
+			catch (InterruptedException e) {
+				reset();
+			}
+		}
+		
+		protected final void readUnlock() {
+			try {
+				out.acquire();
+				ctrout++;
+				if (wait && ctrin == ctrout) {
+					wrt.release();
+				}
+				out.release();
+			}
+			catch (InterruptedException e) {
+				reset();
+			}
+		}
+		
+		protected final void writeLock() {
+			try {
+				in.acquire();
+				out.acquire();
+				if (ctrin == ctrout) {
+					out.release();
+				}
+				else {
+					wait = true;
+					out.release();
+					wrt.acquire();
+					wait = false;
+				}
+			}
+			catch (InterruptedException e) {
+				reset();
+			}
+		}
+		
+		protected final void writeUnlock() {
+			in.release();
+		}
+	};
+	private final RWSync rwSync;
 	
-	public Set<Map.Entry<IPAddress<?>, Set<IDevice>>> entrySet() {
-		return Collections.unmodifiableSet(mcastToDeviceMap.entrySet());
+	public ParticipantTable() {
+		mcastToDeviceMap = new HashMap<IPAddress<?>, Set<IDevice>>();
+		deviceToMcastMap = new HashMap<IDevice, Set<IPAddress<?>>>();
+		
+		rwSync = new RWSync();
 	}
 	
 	public void add(IPAddress<?> mcastAddress, IDevice device) {
@@ -33,8 +108,15 @@ public class ParticipantTable {
 			return;
 		}
 		
+		// Init
+		Set<IDevice> memberSet;
+		Set<IPAddress<?>> groupSet;
+		
+		// Acquire lock
+		rwSync.writeLock();
+		
 		// Add to Member Set
-		Set<IDevice> memberSet = mcastToDeviceMap.get(mcastAddress);
+		memberSet = mcastToDeviceMap.get(mcastAddress);
 		if (memberSet == null) {
 			memberSet = new HashSet<IDevice>();
 			mcastToDeviceMap.put(mcastAddress, memberSet);
@@ -42,12 +124,15 @@ public class ParticipantTable {
 		memberSet.add(device);
 		
 		// Add to Group Set
-		Set<IPAddress<?>> groupSet = deviceToMcastMap.get(device);
+		groupSet = deviceToMcastMap.get(device);
 		if (groupSet == null) {
 			groupSet = new HashSet<IPAddress<?>>();
 			deviceToMcastMap.put(device, groupSet);
 		}
 		groupSet.add(mcastAddress);
+		
+		// Release lock
+		rwSync.writeUnlock();
 	}
 	
 	public void remove(IPAddress<?> mcastAddress, IDevice device) {
@@ -55,8 +140,15 @@ public class ParticipantTable {
 			return;
 		}
 		
+		// Init
+		Set<IDevice> memberSet;
+		Set<IPAddress<?>> groupSet;
+		
+		// Acquire lock
+		rwSync.writeLock();
+	
 		// Remove from Member Set
-		Set<IDevice> memberSet  = mcastToDeviceMap.get(mcastAddress);
+		memberSet = mcastToDeviceMap.get(mcastAddress);
 		if (memberSet != null) {
 			memberSet.remove(device);
 			if (memberSet.isEmpty()) {
@@ -65,25 +157,41 @@ public class ParticipantTable {
 		}
 		
 		// Remove from Group Set
-		Set<IPAddress<?>> groupSet = deviceToMcastMap.get(device);
+		groupSet = deviceToMcastMap.get(device);
 		if (groupSet != null) {
 			groupSet.remove(mcastAddress);
 			if (groupSet.isEmpty()) {
 				deviceToMcastMap.remove(device);
 			}
 		}
+		
+		// Release lock
+		rwSync.writeUnlock();
 	}
 	
-	public boolean contains(IPAddress<?> mcastAddress, IDevice device) {
+	public Boolean contains(IPAddress<?> mcastAddress, IDevice device) {
 		if (mcastAddress == null || device == null) {
 			return false;
 		}
 		
-		if (mcastToDeviceMap.containsKey(mcastAddress) && 
-				deviceToMcastMap.containsKey(device)) {
-			return true;
-		}	
-		return false;
+		// Init
+		Set<IDevice> memberSet;
+		Boolean result;
+		
+		// Acquire lock
+		rwSync.readLock();
+		
+		result = false;
+		memberSet = mcastToDeviceMap.get(mcastAddress);
+		if (memberSet != null &&
+				memberSet.contains(device)) {
+			result = true;
+		}
+		
+		// Release lock
+		rwSync.readUnlock();
+
+		return result;
 	}
 	
 	public Set<IDevice> getMembers(IPAddress<?> mcastAddress) {
@@ -91,8 +199,19 @@ public class ParticipantTable {
 			return ImmutableSet.of();
 		}
 		
-		Set<IDevice> memberSet = mcastToDeviceMap.get(mcastAddress);
-		return (memberSet == null) ? ImmutableSet.of() : Collections.unmodifiableSet(memberSet);
+		// Init
+		Set<IDevice> memberSet;
+		
+		// Acquire lock
+		rwSync.readLock();
+		
+		memberSet = mcastToDeviceMap.get(mcastAddress);
+		memberSet = (memberSet == null) ? ImmutableSet.of() : new HashSet<IDevice>(memberSet);
+		
+		// Release lock
+		rwSync.readUnlock();
+		
+		return memberSet;
 	}
 	
 	public Set<IPAddress<?>> getGroups(IDevice device) {
@@ -100,32 +219,87 @@ public class ParticipantTable {
 			return ImmutableSet.of();
 		}
 		
-		Set<IPAddress<?>> groupSet = deviceToMcastMap.get(device);
-		return (groupSet == null) ? ImmutableSet.of() : Collections.unmodifiableSet(groupSet);
+		// Init
+		Set<IPAddress<?>> groupSet;
+		
+		// Acquire lock
+		rwSync.readLock();
+		
+		groupSet = deviceToMcastMap.get(device);
+		groupSet = (groupSet == null) ? ImmutableSet.of() : new HashSet<IPAddress<?>>(groupSet);
+		
+		// Release lock
+		rwSync.readUnlock();
+		
+		return groupSet;
 	}
 	
 	public Set<IDevice> getAllMembers() {
-		return Collections.unmodifiableSet(deviceToMcastMap.keySet());
+		// Init
+		Set<IDevice> allMemberSet;
+		
+		// Acquire lock
+		rwSync.readLock();
+		
+		allMemberSet = new HashSet<IDevice>(deviceToMcastMap.keySet());
+		
+		// Release lock
+		rwSync.readUnlock();
+		
+		return allMemberSet;
 	}
 	
 	public Set<IPAddress<?>> getAllGroups() {
-		return Collections.unmodifiableSet(mcastToDeviceMap.keySet());
+		// Init
+		Set<IPAddress<?>> allGroupSet;
+		
+		// Acquire lock
+		rwSync.readLock();
+		
+		allGroupSet = Collections.unmodifiableSet(mcastToDeviceMap.keySet());
+		
+		// Release lock
+		rwSync.readUnlock();
+		
+		return allGroupSet;
 	}
 	
-	public boolean isMember(IDevice device) {
+	public Boolean isMember(IDevice device) {
 		if (device == null) {
 			return false;
 		}
 		
-		return deviceToMcastMap.containsKey(device);
+		// Init
+		Boolean result;
+		
+		// Acquire lock
+		rwSync.readLock();
+		
+		result = deviceToMcastMap.containsKey(device);
+		
+		// Release lock
+		rwSync.readUnlock();
+		
+		return result;
 	}
 	
-	public boolean isGroup(IPAddress<?> mcastAddress) {
+	public Boolean isGroup(IPAddress<?> mcastAddress) {
 		if (mcastAddress == null) {
 			return false;
 		}
 		
-		return mcastToDeviceMap.containsKey(mcastAddress);
+		// Init
+		Boolean result;
+		
+		// Acquire lock
+		rwSync.readLock();
+		
+		result = mcastToDeviceMap.containsKey(mcastAddress);
+		
+		// Release lock
+		rwSync.readUnlock();
+		
+		return result;
 	}
 	
 	public void deleteGroup(IPAddress<?> mcastAddress) {
@@ -133,7 +307,7 @@ public class ParticipantTable {
 			return;
 		}
 		
-		Set<IDevice> memberSet = mcastToDeviceMap.get(mcastAddress);
+		Set<IDevice> memberSet = getMembers(mcastAddress);
 		if (memberSet != null) {
 			for(IDevice device: memberSet) {
 				remove(mcastAddress, device);
@@ -146,7 +320,7 @@ public class ParticipantTable {
 			return;
 		}
 		
-		Set<IPAddress<?>> groupSet = deviceToMcastMap.get(device);
+		Set<IPAddress<?>> groupSet = getGroups(device);
 		if (groupSet != null) {	
 			for(IPAddress<?> mcastAddress: groupSet) {
 				remove(mcastAddress, device);
@@ -155,7 +329,13 @@ public class ParticipantTable {
 	}
 	
 	public void clearTable() {
+		// Acquire lock
+		rwSync.writeLock();
+		
 		mcastToDeviceMap.clear();
 		deviceToMcastMap.clear();
+		
+		// Release lock
+		rwSync.writeUnlock();
 	}
 }

@@ -15,6 +15,7 @@ import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
 import net.floodlightcontroller.devicemanager.IDevice;
+import net.floodlightcontroller.devicemanager.IDeviceListener;
 import net.floodlightcontroller.multicasting.IMulticastListener;
 import net.floodlightcontroller.multicasting.IMulticastService;
 
@@ -25,7 +26,7 @@ import net.floodlightcontroller.multicasting.IMulticastService;
  * in Multicast Service and the MulticastGroups & MulticastPaths in 
  * Topology Service
  */
-public class MulticastManager implements IFloodlightModule, IMulticastService {
+public class MulticastManager implements IFloodlightModule, IMulticastService, IDeviceListener {
 	
     /**
      * Table contains multicast group membership information
@@ -69,33 +70,25 @@ public class MulticastManager implements IFloodlightModule, IMulticastService {
 	
 	@Override
 	public void addParticipant(IPAddress<?> mcastAddress, IDevice device) {
-		if (mcastAddress == null || device == null) {
-			return;
-		}
-		
 		if (!participantTable.contains(mcastAddress, device)) {
+			participantTable.add(mcastAddress, device);
+			
 			// Inform listeners
 			for (IMulticastListener multicastingListener: multicastingListeners) {
 				multicastingListener.ParticipantAdded(mcastAddress, device);
 			}
-			
-			participantTable.add(mcastAddress, device);
 		}
 	}
 
 	@Override
 	public void removeParticipant(IPAddress<?> mcastAddress, IDevice device) {
-		if (mcastAddress == null || device == null) {
-			return;
-		}
-		
 		if (participantTable.contains(mcastAddress, device)) {
+			participantTable.remove(mcastAddress, device);
+			
 			// Inform listeners
 			for (IMulticastListener multicastingListener: multicastingListeners) {
 				multicastingListener.ParticipantRemoved(mcastAddress, device);
 			}
-			
-			participantTable.remove(mcastAddress, device);
 		}
 	}
 
@@ -136,44 +129,36 @@ public class MulticastManager implements IFloodlightModule, IMulticastService {
 
 	@Override
 	public void deleteParticipantGroup(IPAddress<?> mcastAddress) {
-		if (mcastAddress == null) {
-			return;
-		}
-		
 		// Inform listeners
 		if (participantTable.isGroup(mcastAddress)) {
+			participantTable.deleteGroup(mcastAddress);
+			
 			for (IMulticastListener multicastingListener: multicastingListeners) {
 				multicastingListener.ParticipantGroupRemoved(mcastAddress);
 			}
-			
-			participantTable.deleteGroup(mcastAddress);
 		}
 	}
 
 	@Override
 	public void deleteParticipantMember(IDevice device) {
-		if (device == null) {
-			return;
-		}
-		
 		if (participantTable.isMember(device)) {
+			participantTable.deleteMember(device);
+			
 			// Inform listeners
 			for (IMulticastListener multicastingListener: multicastingListeners) {
 				multicastingListener.ParticipantMemberRemoved(device);
 			}
-		
-			participantTable.deleteMember(device);
 		}
 	}
 
 	@Override
 	public void clearAllParticipants() {
+		participantTable.clearTable();
+		
 		// Inform listeners
 		for (IMulticastListener multicastingListener: multicastingListeners) {
 			multicastingListener.ParticipantsReset();
 		}
-		
-		participantTable.clearTable();
 	}
 	
 	@Override
@@ -184,5 +169,68 @@ public class MulticastManager implements IFloodlightModule, IMulticastService {
 	@Override
 	public void removeListener(IMulticastListener listener) {
 		multicastingListeners.remove(listener);
+	}
+
+	@Override
+	public String getName() {
+		return "multicasting";
+	}
+
+	@Override
+	public boolean isCallbackOrderingPrereq(String type, String name) {
+		return false;
+	}
+
+	@Override
+	public boolean isCallbackOrderingPostreq(String type, String name) {
+		return false;
+	}
+
+	@Override
+	public void deviceAdded(IDevice device) {
+		Set<IPAddress<?>> groupSet = participantTable.getGroups(device);
+		if (!groupSet.isEmpty()) {
+			// Inform Listeners
+			for (IMulticastListener multicastingListener: multicastingListeners) {
+				multicastingListener.ParticipantMemberUpdated(device);
+			}
+		}
+	}
+
+	@Override
+	public void deviceRemoved(IDevice device) {
+		Set<IPAddress<?>> groupSet = participantTable.getGroups(device);
+		if (!groupSet.isEmpty()) {
+			// Inform Listeners
+			for (IMulticastListener multicastingListener: multicastingListeners) {
+				multicastingListener.ParticipantMemberUpdated(device);
+			}
+		}
+	}
+
+	@Override
+	public void deviceMoved(IDevice device) {
+		Set<IPAddress<?>> groupSet = participantTable.getGroups(device);
+		if (!groupSet.isEmpty()) {
+			// Inform Listeners
+			for (IMulticastListener multicastingListener: multicastingListeners) {
+				multicastingListener.ParticipantMemberUpdated(device);
+			}
+		}
+	}
+
+	@Override
+	public void deviceIPV4AddrChanged(IDevice device) {
+		// nothing to do
+	}
+
+	@Override
+	public void deviceIPV6AddrChanged(IDevice device) {
+		// nothing to do
+	}
+
+	@Override
+	public void deviceVlanChanged(IDevice device) {
+		// nothing to do
 	}
 }
