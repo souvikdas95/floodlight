@@ -60,7 +60,8 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IM
 	@Override
 	public boolean isCallbackOrderingPostreq(OFType type, String name)
 	{
-		return false;
+		return (type.equals(OFType.PACKET_IN) && 
+				name.equals("forwarding"));
 	}
 
 	@Override
@@ -165,31 +166,31 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IM
 
 	@Override
 	public void ParticipantAdded(IPAddress<?> mcastAddress, IDevice device) {
-		// TODO Auto-generated method stub
-		
+		// nothing to do
 	}
 
 	@Override
 	public void ParticipantRemoved(IPAddress<?> mcastAddress, IDevice device) {
-		// TODO Auto-generated method stub
-		
+		// nothing to do
 	}
 
 	@Override
 	public void ParticipantGroupRemoved(IPAddress<?> mcastAddress) {
-		// TODO Auto-generated method stub
-		
+		// nothing to do
 	}
 
 	@Override
 	public void ParticipantMemberRemoved(IDevice device) {
-		// TODO Auto-generated method stub
-		
+		// nothing to do
 	}
 
 	@Override
 	public void ParticipantsReset() {
-		// TODO Auto-generated method stub
-		
+		// nothing to do
+	}
+
+	@Override
+	public void ParticipantMemberUpdated(IDevice device) {
+		// nothing to do
 	}
 }
