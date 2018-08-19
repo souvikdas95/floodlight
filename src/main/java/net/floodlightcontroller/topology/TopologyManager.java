@@ -32,7 +32,6 @@ import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
 import net.floodlightcontroller.linkdiscovery.Link;
 import net.floodlightcontroller.multicasting.IMulticastListener;
 import net.floodlightcontroller.multicasting.IMulticastService;
-import net.floodlightcontroller.multicasting.internal.ParticipantTable;
 import net.floodlightcontroller.packet.BSN;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.LLDP;
@@ -119,7 +118,7 @@ IOFMessageListener {
     protected static IRestApiService restApiService;
     protected static IDebugCounterService debugCounterService;
     protected static IStatisticsService statisticsService;
-    protected static IMulticastService multicastingService;
+    protected static IMulticastService multicastService;
 
     // Modules that listen to our updates
     protected ArrayList<ITopologyListener> topologyAware;
@@ -156,11 +155,6 @@ IOFMessageListener {
      */
     protected static final String PACKAGE = TopologyManager.class.getPackage().getName();
     protected IDebugCounter ctrIncoming;
-
-    /**
-     * Table contains multicast group membership information
-     */
-    protected ParticipantTable participantTable;
     
     //  Getter/Setter methods
     /**
@@ -617,7 +611,7 @@ IOFMessageListener {
         restApiService = context.getServiceImpl(IRestApiService.class);
         debugCounterService = context.getServiceImpl(IDebugCounterService.class);
         statisticsService = context.getServiceImpl(IStatisticsService.class);
-        multicastingService = context.getServiceImpl(IMulticastService.class);
+        multicastService = context.getServiceImpl(IMulticastService.class);
 
         switchPorts = new HashMap<DatapathId, Set<OFPort>>();
         switchPortLinks = new HashMap<NodePortTuple, Set<Link>>();
@@ -684,7 +678,7 @@ IOFMessageListener {
         }
 
         linkDiscoveryService.addListener(this);
-        multicastingService.addListener(this);
+        multicastService.addListener(this);
         floodlightProviderService.addOFMessageListener(OFType.PACKET_IN, this);
         floodlightProviderService.addHAListener(this.haListener);
         addRestletRoutable();
@@ -1370,43 +1364,47 @@ IOFMessageListener {
 	@Override
 	public void ParticipantAdded(IPAddress<?> mcastAddress, IDevice device) {
 		BigInteger mgId = MulticastUtils.MgIdFromMcastIP(mcastAddress);
-		Set<IDevice> devices = new HashSet<IDevice>();
-		devices.add(device);
 		TopologyInstance ti = getCurrentInstance();
-		ti.addParticipants(mgId, devices, true);
+		ti.addParticipant(mgId, device, true);
 	}
 
 	@Override
 	public void ParticipantRemoved(IPAddress<?> mcastAddress, IDevice device) {
 		BigInteger mgId = MulticastUtils.MgIdFromMcastIP(mcastAddress);
-		Set<IDevice> devices = new HashSet<IDevice>();
-		devices.add(device);
 		TopologyInstance ti = getCurrentInstance();
-		ti.removeParticipants(mgId, devices, true);
+		ti.removeParticipant(mgId, device);
 	}
 
 	@Override
 	public void ParticipantGroupRemoved(IPAddress<?> mcastAddress) {
 		BigInteger mgId = MulticastUtils.MgIdFromMcastIP(mcastAddress);
 		TopologyInstance ti = getCurrentInstance();
-		ti.removeParticipants(mgId, participantTable.getMembers(mcastAddress), true);
+		for (IDevice device: multicastService.getParticipantMembers(mcastAddress)) {
+			ti.removeParticipant(mgId, device);
+		}
 	}
 
 	@Override
 	public void ParticipantMemberRemoved(IDevice device) {
-		Set<BigInteger> mgIds = new HashSet<BigInteger>();
-		for (IPAddress<?> mcastAddress: participantTable.getAllGroups()) {
-			mgIds.add(MulticastUtils.MgIdFromMcastIP(mcastAddress));
-		}
-		Set<IDevice> devices = new HashSet<IDevice>();
-		devices.add(device);
 		TopologyInstance ti = getCurrentInstance();
-		ti.removeParticipants(mgIds, devices, true);
+		for (IPAddress<?> mcastAddress: multicastService.getParticipantGroups(device)) {
+			BigInteger mgId = MulticastUtils.MgIdFromMcastIP(mcastAddress);
+			ti.removeParticipant(mgId, device);
+		}
 	}
-
+	
 	@Override
 	public void ParticipantsReset() {
 		TopologyInstance ti = getCurrentInstance();
 		ti.clearParticipants();
+	}
+
+	@Override
+	public void ParticipantMemberUpdated(IDevice device) {
+		TopologyInstance ti = getCurrentInstance();
+		for (IPAddress<?> mcastAddress: multicastService.getParticipantGroups(device)) {
+			BigInteger mgId = MulticastUtils.MgIdFromMcastIP(mcastAddress);
+			ti.updateParticipant(mgId, device);
+		}
 	}
 }

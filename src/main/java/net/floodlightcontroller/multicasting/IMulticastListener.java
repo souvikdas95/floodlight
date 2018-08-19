@@ -14,4 +14,6 @@ public interface IMulticastListener {
 	void ParticipantMemberRemoved(IDevice device);
 	
 	void ParticipantsReset();
+
+	void ParticipantMemberUpdated(IDevice device);
 }
