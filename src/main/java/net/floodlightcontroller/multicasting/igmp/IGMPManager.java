@@ -31,6 +31,12 @@ import net.floodlightcontroller.packet.IGMP;
 import net.floodlightcontroller.packet.IGMP.IGMPv3GroupRecord;
 import net.floodlightcontroller.packet.IPv4;
 
+/**
+ * @author Souvik Das (souvikdas95@yahoo.co.in)
+ * 
+ * Manager for IGMP based Multicasting
+ * 
+ */ 
 public class IGMPManager implements IFloodlightModule, IOFMessageListener, IMulticastListener {
 	
 	protected static Logger logger;
@@ -178,5 +184,11 @@ public class IGMPManager implements IFloodlightModule, IOFMessageListener, IMult
 	public void ParticipantsReset() {
 		// TODO Auto-generated method stub
 
+	}
+
+	@Override
+	public void ParticipantMemberUpdated(IDevice device) {
+		// TODO Auto-generated method stub
+		
 	}
 }
