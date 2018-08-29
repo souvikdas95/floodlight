@@ -12,9 +12,14 @@ import org.projectfloodlight.openflow.types.OFPort;
 import org.python.google.common.collect.ImmutableSet;
 
 import net.floodlightcontroller.core.types.NodePortTuple;
+import net.floodlightcontroller.util.RWSync;
 
-/*
- * Must exist per archipelago
+/**
+ * @author Souvik Das (souvikdas95@yahoo.co.in)
+ * 
+ * Group of Multicasting Devices and their attachmentPoints
+ * in a given archipelago
+ * 
  */
 public class MulticastGroup {
 	
@@ -33,12 +38,16 @@ public class MulticastGroup {
 	// Map of switches and edge ports connected to participant devices
 	private final Map<DatapathId, Set<OFPort>> swEdgePorts;
 	
+	// Reader-Writer Sync
+	private final RWSync rwSync;
+	
 	public MulticastGroup(BigInteger mgId, Archipelago archipelago) {
 		this.mgId = mgId;
 		this.archipelago = archipelago;
 		devAps = new HashMap<Long, Set<NodePortTuple>>();
 		apDevs = new HashMap<NodePortTuple, Set<Long>>();
 		swEdgePorts = new HashMap<DatapathId, Set<OFPort>>();
+		rwSync = new RWSync();
 	}
 	
 	public BigInteger getId() {
@@ -53,6 +62,8 @@ public class MulticastGroup {
 		if (devKey == null || ap == null) {
 			return;
 		}
+		
+		rwSync.writeLock();
 		
 		Set<NodePortTuple> nptSet = devAps.get(devKey);
 		if (nptSet == null) {
@@ -76,12 +87,16 @@ public class MulticastGroup {
 			swEdgePorts.put(swId, ports);
 		}
 		ports.add(port);
+		
+		rwSync.writeUnlock();
 	}
 	
 	public void remove(Long devKey) {
 		if (devKey == null) {
 			return;
 		}
+		
+		rwSync.writeLock();
 		
 		Set<NodePortTuple> nptSet = devAps.get(devKey);
 		if (nptSet != null) {
@@ -101,12 +116,16 @@ public class MulticastGroup {
 			}
 			devAps.remove(devKey);
 		}
+		
+		rwSync.writeUnlock();
 	}
 	
 	public void remove(Long devKey, NodePortTuple npt) {
 		if (devKey == null || npt == null) {
 			return;
 		}
+		
+		rwSync.writeLock();
 		
 		Set<NodePortTuple> nptSet = devAps.get(devKey);
 		if (nptSet != null) {
@@ -129,6 +148,8 @@ public class MulticastGroup {
 				devAps.remove(devKey);
 			}
 		}
+		
+		rwSync.writeUnlock();
 	}
 	
 	public boolean hasDevice(Long devKey) {
@@ -136,7 +157,15 @@ public class MulticastGroup {
 			return false;
 		}
 		
-		return devAps.keySet().contains(devKey);
+		boolean result;
+		
+		rwSync.readLock();
+		
+		result = devAps.keySet().contains(devKey);
+		
+		rwSync.readUnlock();
+		
+		return result;
 	}
 	
 	public boolean hasAttachmentPoint(NodePortTuple npt) {
@@ -144,15 +173,39 @@ public class MulticastGroup {
 			return false;
 		}
 		
-		return apDevs.keySet().contains(npt);
+		boolean result;
+		
+		rwSync.readLock();
+		
+		result = apDevs.keySet().contains(npt);
+		
+		rwSync.readUnlock();
+		
+		return result;
 	}
 	
 	public Set<Long> getAllDevices() {
-		return Collections.unmodifiableSet(devAps.keySet());
+		Set<Long> result;
+		
+		rwSync.readLock();
+		
+		result =  new HashSet<Long>(devAps.keySet());
+		
+		rwSync.readUnlock();
+		
+		return result;
 	}
 	
 	public Set<NodePortTuple> getAllAttachmentPoints() {
-		return Collections.unmodifiableSet(apDevs.keySet());
+		Set<NodePortTuple> result;
+		
+		rwSync.readLock();
+		
+		result = Collections.unmodifiableSet(apDevs.keySet());
+		
+		rwSync.readUnlock();
+		
+		return result;
 	}
 	
 	public Set<Long> getDevices(NodePortTuple npt) {
@@ -160,8 +213,16 @@ public class MulticastGroup {
 			return ImmutableSet.of();
 		}
 		
-		Set<Long> result = apDevs.get(npt);
-		return (result == null) ? ImmutableSet.of() : Collections.unmodifiableSet(result);
+		Set<Long> result;
+		
+		rwSync.readLock();
+		
+		result = apDevs.get(npt);
+		result = (result == null) ? ImmutableSet.of() : new HashSet<Long>(result);
+		
+		rwSync.readUnlock();
+		
+		return result;
 	}
 	
 	public Set<NodePortTuple> getAttachmentPoints(Long devKey) {
@@ -169,7 +230,15 @@ public class MulticastGroup {
 			return ImmutableSet.of();
 		}
 		
-		Set<NodePortTuple> result = devAps.get(devKey);
+		Set<NodePortTuple> result;
+		
+		rwSync.readLock();
+		
+		result = devAps.get(devKey);
+		result = (result == null) ? ImmutableSet.of() : new HashSet<NodePortTuple>(result);
+		
+		rwSync.readUnlock();
+		
 		return (result == null) ? ImmutableSet.of() : Collections.unmodifiableSet(result);
 	}
 	
@@ -178,11 +247,27 @@ public class MulticastGroup {
 			return false;
 		}
 		
-		return swEdgePorts.containsKey(swId);
+		boolean result;
+		
+		rwSync.readLock();
+		
+		result = swEdgePorts.containsKey(swId);
+		
+		rwSync.readUnlock();
+		
+		return result;
 	}
 	
 	public Set<DatapathId> getSwitches() {
-		return Collections.unmodifiableSet(swEdgePorts.keySet());
+		Set<DatapathId> result;
+		
+		rwSync.readLock();
+		
+		result =  new HashSet<DatapathId>(swEdgePorts.keySet());
+		
+		rwSync.readUnlock();
+		
+		return result;
 	}
 	
 	public Set<OFPort> getEdgePorts(DatapathId swId) {
@@ -190,12 +275,28 @@ public class MulticastGroup {
 			return ImmutableSet.of();
 		}
 		
-		Set<OFPort> result = swEdgePorts.get(swId);
-		return (result == null) ? ImmutableSet.of() : Collections.unmodifiableSet(result);
+		Set<OFPort> result;
+		
+		rwSync.readLock();
+		
+		result = swEdgePorts.get(swId);
+		result = (result == null) ? ImmutableSet.of() : new HashSet<OFPort>(result);
+		
+		rwSync.readUnlock();
+		
+		return result;
 	}
 	
 	public boolean isEmpty() {
-		return devAps.isEmpty();
+		boolean result;
+		
+		rwSync.readLock();
+		
+		result = devAps.isEmpty();
+		
+		rwSync.readUnlock();
+		
+		return result;
 	}
 	
     @Override

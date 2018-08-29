@@ -50,14 +50,17 @@ import net.floodlightcontroller.util.*;
 
 import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
+import org.projectfloodlight.openflow.protocol.action.OFActionGroup;
 import org.projectfloodlight.openflow.protocol.action.OFActionOutput;
 import org.projectfloodlight.openflow.protocol.action.OFActions;
+import org.projectfloodlight.openflow.protocol.instruction.OFInstruction;
+import org.projectfloodlight.openflow.protocol.instruction.OFInstructionApplyActions;
+import org.projectfloodlight.openflow.protocol.instruction.OFInstructions;
 import org.projectfloodlight.openflow.protocol.match.Match;
 import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.protocol.oxm.OFOxms;
 import org.projectfloodlight.openflow.types.*;
 import org.python.google.common.collect.ImmutableList;
-import org.python.google.common.collect.ImmutableSet;
 import org.python.google.common.collect.Maps;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -93,8 +96,8 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
     private static final short DECISION_BITS = 24;
     private static final short DECISION_SHIFT = 0;
     private static final long DECISION_MASK = ((1L << DECISION_BITS) - 1) << DECISION_SHIFT;
-
-    private static final short FLOWSET_BITS = 28;
+    
+    private static final short FLOWSET_BITS = 24; // usable bits from OFPG_MAX
     protected static final short FLOWSET_SHIFT = DECISION_BITS;
     private static final long FLOWSET_MASK = ((1L << FLOWSET_BITS) - 1) << FLOWSET_SHIFT;
     private static final long FLOWSET_MAX = (long) (Math.pow(2, FLOWSET_BITS) - 1);
@@ -327,7 +330,8 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
             }
             else {
             	if (eth.isMulticast()) {
-            		doMulticast(sw, pi, decision, cntx, false);
+            		// Notice that there's no check for incoming interface address as it's a multicast address
+            		doMulticast(sw, pi, decision, cntx, true);
             	}
             	else {
             		doFlood(sw, pi, decision, cntx);
@@ -528,8 +532,22 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         }
     }
     
+    /**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * This function retrieves a patch from source device to destination devices in multicast group and then 
+     * install flows(L3/L2) over the path.
+     * In L3 case, virtual router replaces source mac with outgoing interface gateway mac.
+     * 
+     * @param sw Switch
+     * @param pi Packet-in
+     * @param decision Decision for packet
+     * @param cntx The FloodlightContext associated with this OFPacketIn
+     * 
+     * @return
+     */
     private void doMulticast(IOFSwitch sw, OFPacketIn pi, IRoutingDecision decision, FloodlightContext cntx,
-    		boolean requestFlowRemovedNotifn) {	
+    		boolean isL3) {	
     	Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
     	OFPort inPort = OFMessageUtils.getInPort(pi);
         DatapathId curSwId = sw.getId();
@@ -550,7 +568,8 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 
         /* This packet-in is from a switch in the path before its flow was installed along the path */
         if (!topologyService.isEdge(curSwId, inPort)) {
-            log.debug("Packet destination is known, but packet was not received on an edge port (rx on {}/{}). Flooding packet", curSwId, inPort);
+            log.debug("Packet destination is known, but packet was not received on an edge port (rx on {}/{}). " + 
+            		"Flooding packet", curSwId, inPort);
             doFlood(sw, pi, decision, cntx);
             return;
         }
@@ -583,8 +602,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 	            }
 
 	            pushMulticastPath(mPath, m, pi, sw.getId(), inPort, cookie,
-	                    cntx, requestFlowRemovedNotifn,
-	                    OFFlowModCommand.ADD);
+	                    cntx, OFFlowModCommand.ADD, isL3);
 
 	            /*
 	             * Register this flowset with ingress and egress ports for link down
@@ -636,7 +654,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
      */
 	public boolean pushMulticastPath(MulticastPath mPath, Match match, OFPacketIn pi,
             DatapathId srcSwId, OFPort srcPort, U64 cookie, FloodlightContext cntx,
-            boolean requestFlowRemovedNotification, OFFlowModCommand flowModCommand) {
+            OFFlowModCommand flowModCommand, boolean isL3) {
         Map<DatapathId, Set<OFPort>> swOutPorts = new HashMap<DatapathId, Set<OFPort>>();
         Map<DatapathId, OFPort> swInPort = new HashMap<DatapathId, OFPort>();
         List<DatapathId> swIdList = new LinkedList<DatapathId>();
@@ -679,6 +697,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         	}
         	outPorts.addAll(mPath.getEdgePorts(dstSwId));
         }
+        // Add flow entry point at the last
         swInPort.put(srcSwId, srcPort);
         swIdList.add(srcSwId);
         
@@ -694,217 +713,402 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         }
         
         /* 
-         * Install flow rules on switches
+         * Build messages for switches
          */
         for (DatapathId swId: swIdList) {
 			IOFSwitch sw =  switchService.getSwitch(swId);
             if (sw == null) {
                 if (log.isErrorEnabled()) {
-                    log.error("Unable to push multicast route, switch at DPID {} " + "not available", sw);
+                    log.error("Unable to push multicast route, switch at DPID {} " +
+                "not available", sw);
                 }
                 return false;
             }
+            List<OFMessage> msgList = new ArrayList<OFMessage>();
         	
-            // Get inPort, apPorts, outPorts of the switch
+            // Get inPort, edgePorts, outPorts of the switch
             OFPort inPort = swInPort.get(swId);
             Set<OFPort> outPorts = swOutPorts.get(swId);
-            boolean isSrcSw = swId.equals(srcSwId);
-            
+            Set<OFPort> edgePorts = mPath.getEdgePorts(swId);
             if (log.isTraceEnabled()) {
-                log.trace(String.format("pushMulticastPath: Switch: {s%d}, inPort: {%s}, outPorts: {%s}", 
+                log.trace(String.format("pushMulticastPath: Switch: {s%d}, inPort: {%s}, " +
+                		" outPorts: {%s}", 
                 		sw.getId().getLong(), inPort, outPorts));
             }
             
-            // Process
-            Optional<VirtualGatewayInstance> simpleGatewayInstance = getGatewayInstance(swId);
-            if (simpleGatewayInstance.isPresent()) {
-            	MacAddress simpleGatewayMac = simpleGatewayInstance.get().getGatewayMac();
-            	pushMulticastFlow(sw, inPort, outPorts, isSrcSw, match, pi, cookie, cntx, 
-	        			requestFlowRemovedNotification, flowModCommand, simpleGatewayMac);
-	        	outPorts.clear();
+            // Filter FlowModCommand & Create GroupModCommand
+            OFGroupModCommand groupModCommand;
+            switch(flowModCommand) {
+            case DELETE_STRICT:
+            	flowModCommand = OFFlowModCommand.DELETE;
+            case DELETE:
+            	groupModCommand = OFGroupModCommand.DELETE;
+            	break;
+            case MODIFY_STRICT:
+            case MODIFY:
+        		flowModCommand = OFFlowModCommand.ADD;
+            case ADD:
+            default:
+            	groupModCommand = OFGroupModCommand.ADD;
+                break;
             }
-            else {
-            	for (OFPort outPort: outPorts) {
-            		Optional<VirtualGatewayInstance> gatewayInstance = 
-            				getGatewayInstance(new NodePortTuple(swId, outPort));
-            		if (gatewayInstance.isPresent()) {
-            			MacAddress gatewayMac = gatewayInstance.get().getGatewayMac();
-            			pushMulticastFlow(sw, inPort, new HashSet<OFPort>(Arrays.asList(outPort)), 
-            					isSrcSw, match, pi, cookie, cntx, requestFlowRemovedNotification, 
-            					flowModCommand, gatewayMac);
-            			outPorts.remove(outPort);
-            		}
-            	}
+            
+            // Build PacketOut message (for edge destinations)
+            if (!edgePorts.isEmpty()) {
+	            if (isL3) {
+		            Optional<VirtualGatewayInstance> simpleGatewayInstance = 
+		            		getGatewayInstance(swId);
+		            if (simpleGatewayInstance.isPresent()) {
+		            	MacAddress simpleGatewayMac = simpleGatewayInstance.get()
+		            			.getGatewayMac();
+		                OFPacketOut packetOutMsg = createMulticastPacketOutMsg(sw, edgePorts, 
+		                		pi, cntx, simpleGatewayMac);
+		                if (packetOutMsg == null) {
+		                    if (log.isErrorEnabled()) {
+		                        log.error("Switch at DPID {} " +
+		                    "failed to create Multicast PacketOut message", sw);
+		                    }
+		                    return false;
+		                }
+		            	msgList.add(packetOutMsg);
+		            }
+		            else {
+		            	for (OFPort edgePort: edgePorts) {
+		            		Optional<VirtualGatewayInstance> gatewayInstance = 
+		            				getGatewayInstance(new NodePortTuple(swId, edgePort));
+		            		if (gatewayInstance.isPresent()) {
+		            			MacAddress gatewayMac = gatewayInstance.get().getGatewayMac();
+		                        OFPacketOut packetOutMsg = createMulticastPacketOutMsg(sw, 
+		                        		new HashSet<OFPort>(Arrays.asList(edgePort)), pi, cntx, 
+		                        		gatewayMac);
+		                        if (packetOutMsg == null) {
+		                            if (log.isErrorEnabled()) {
+		                                log.error("Switch at DPID {} " +
+		                            "failed to create Multicast PacketOut message", sw);
+		                            }
+		                            return false;
+		                        }
+		                    	msgList.add(packetOutMsg);
+		            		}
+		            	}
+		            }
+	            }
+	            else {
+	                OFPacketOut packetOutMsg = createMulticastPacketOutMsg(sw, edgePorts, 
+	                		pi, cntx, MacAddress.NONE);
+	                if (packetOutMsg == null) {
+	                    if (log.isErrorEnabled()) {
+	                        log.error("Switch at DPID {} " +
+	                    "failed to create Multicast PacketOut message", sw);
+	                    }
+	                    return false;
+	                }
+	            	msgList.add(packetOutMsg);
+	            }
             }
-	        if (!outPorts.isEmpty()) {
-	        	pushMulticastFlow(sw, inPort, outPorts, isSrcSw, match, pi, cookie, cntx, 
-	        			requestFlowRemovedNotification, flowModCommand, MacAddress.NONE);
-	        }
+            
+            // Build GroupMod message
+            if (!groupModCommand.equals(OFGroupModCommand.DELETE)) {
+            	// First Delete Group to prevent GROUP_EXISTS error messages on Add Group
+                OFGroupMod groupModMsg = createMulticastGroupModMsg(sw, null, 
+                		cookie, OFGroupModCommand.DELETE, false);
+                if (groupModMsg == null) {
+                    if (log.isErrorEnabled()) {
+                        log.error("Switch at DPID {} " +
+                    "failed to create Multicast Group Mod message", sw);
+                    }
+                    return false;
+                }
+            	msgList.add(groupModMsg);
+            }
+            OFGroupMod groupModMsg = createMulticastGroupModMsg(sw, outPorts, 
+            		cookie, groupModCommand, isL3);
+            if (groupModMsg == null) {
+                if (log.isErrorEnabled()) {
+                    log.error("Switch at DPID {} " +
+                "failed to create Multicast Group Mod message", sw);
+                }
+                return false;
+            }
+        	msgList.add(groupModMsg);
+            
+            // Build FlowMod message
+        	if (!flowModCommand.equals(OFFlowModCommand.DELETE)) {
+        		// First Delete Flow to force FLOW_REMOVED required to 
+        		// sync Groups associated with flow.
+        		// Note that this wouldn't remove our current group because
+        		// it will ALWAYS have a different flowSetId/groupId and 
+        		// OFFlowDelete operation doesn't require cookie/flowSetId
+                OFFlowMod flowModMsg = createMulticastFlowModMsg(sw, inPort, match, 
+                		null, OFFlowModCommand.DELETE);
+                if (flowModMsg == null) {
+                    if (log.isErrorEnabled()) {
+                        log.error("Switch at DPID {} " +
+                    "failed to create Multicast Flow Mod message", sw);
+                    }
+                    return false;
+                }
+            	msgList.add(flowModMsg);
+        	}
+            OFFlowMod flowModMsg = createMulticastFlowModMsg(sw, inPort, match, 
+            		cookie, flowModCommand);
+            if (flowModMsg == null) {
+                if (log.isErrorEnabled()) {
+                    log.error("Switch at DPID {} " +
+                    		"failed to create Multicast Flow Mod message", sw);
+                }
+                return false;
+            }
+        	msgList.add(flowModMsg);
+	        
+            // Write msgList to switch
+        	// TODO: Fix OFMessageDamper for list of messages
+            if (!sw.write(msgList).isEmpty()) {
+                if (log.isErrorEnabled()) {
+                    log.error("Some message(s) couldn't be sent to switch at DPID {} " + 
+                    		"due to channel disconnect", sw);
+                }
+                return false;
+            }
         }
-
+        
         return true;
     }
 	
     /**
      * @author Souvik Das (souvikdas95@yahoo.co.in)
      * 
-     * Install multicast flowmod on the switch
+     * Create Multicast Group Mod for the Switch
      * 
-     * @param sw Switch to p
-     * @param isSrcSw Push PacketOut of the switch
-     * @param inPort Input port of the switch
+     * @param sw Switch to send message to
      * @param outPorts Output ports of the switch
-     * @param isSrcSw If sw is the flow source
-     * @param match OpenFlow fields to match on
-     * @param pi PacketIn packet
      * @param cookie The cookie to set in each flow_mod
-     * @param cntx The floodlight context
-     * @param requestFlowRemovedNotification if set to true then the switch would
-     *        send a flow mod removal notification when the flow mod expires
-     * @param flowModCommand flow mod. command to use, e.g. OFFlowMod.OFPFC_ADD,
-     *        OFFlowMod.OFPFC_MODIFY etc.
-     * @param gatewayMac MacAddress of Gateway Interface
+     * @param groupModCommand group mod. command to use, e.g. OFPGC_ADD,
+     *        OFPGC_MODIFY, OFPGC_DELETE etc.
+     * @param isL3 If L3 is enabled
      *        
      * @return
      */
-    private void pushMulticastFlow(IOFSwitch sw, OFPort inPort, Set<OFPort> outPorts, 
-    		boolean isSrcSw, Match match, OFPacketIn pi, U64 cookie, FloodlightContext cntx, 
-    		boolean requestFlowRemovedNotification, OFFlowModCommand flowModCommand, 
-    		MacAddress gatewayMac) {
-    	
-    	/* 
-    	 * Prepare FlowMod 
-    	 */
-        OFFlowMod.Builder fmb;
-        switch (flowModCommand) {
-        case ADD:
-            fmb = sw.getOFFactory().buildFlowAdd();
-            break;
-        case DELETE:
-            fmb = sw.getOFFactory().buildFlowDelete();
-            break;
-        case DELETE_STRICT:
-            fmb = sw.getOFFactory().buildFlowDeleteStrict();
-            break;
-        case MODIFY:
-            fmb = sw.getOFFactory().buildFlowModify();
-            break;
-        default:
-            log.error("Could not decode OFFlowModCommand. Using MODIFY_STRICT. (Should another be used as the default?)");        
-        case MODIFY_STRICT:
-            fmb = sw.getOFFactory().buildFlowModifyStrict();
-            break;			
-        }
-        
+	protected OFGroupMod createMulticastGroupModMsg(IOFSwitch sw, Set<OFPort> outPorts, 
+			U64 cookie, OFGroupModCommand groupModCommand, boolean isL3) {
+		DatapathId swId = sw.getId();
         OFFactory factory = sw.getOFFactory();
         OFActions factoryActions = factory.actions();
         OFVersion factoryVersion = factory.getVersion();
-        OFActionOutput.Builder aob = factoryActions.buildOutput();
-        List<OFAction> actions = new ArrayList<>();
-        Match.Builder mb = MatchUtils.convertToVersion(match, factoryVersion);
-
-        if (FLOWMOD_DEFAULT_MATCH_IN_PORT) {
-            mb.setExact(MatchField.IN_PORT, inPort);
-        }
-        aob.setMaxLen(Integer.MAX_VALUE);
-        for (OFPort outPort: outPorts) {
-            aob.setPort(outPort);
-            actions.add(aob.build());
-        }
-
-        if (FLOWMOD_DEFAULT_SET_SEND_FLOW_REM_FLAG || requestFlowRemovedNotification) {
-            Set<OFFlowModFlags> flags = new HashSet<>();
-            flags.add(OFFlowModFlags.SEND_FLOW_REM);
-            fmb.setFlags(flags);
-        }
-
-        fmb.setMatch(mb.build())
-        .setIdleTimeout(FLOWMOD_DEFAULT_IDLE_TIMEOUT)
-        .setHardTimeout(FLOWMOD_DEFAULT_HARD_TIMEOUT)
-        .setBufferId(OFBufferId.NO_BUFFER)
-        .setCookie(cookie)
-        .setPriority(FLOWMOD_DEFAULT_PRIORITY);
         
-        if (gatewayMac != null &&
-        		!gatewayMac.equals(MacAddress.NONE)) {
-    		fmb.setXid(pi.getXid());
-            switch (factoryVersion) {
-                case OF_10:
-                case OF_11:
-                    actions.add(factoryActions.setDlSrc(gatewayMac));
-                    break;
-                case OF_12:
-                case OF_13:
-                case OF_14:
-                case OF_15:
-                    actions.add(factoryActions.setField(factory.oxms().ethSrc(gatewayMac)));
-                    break;
-                default:
-                    break;
-            }
-		}
-        
-        fmb.setActions(actions);
-        
-        /* 
-         * Configure for particular switch pipeline 
-         */
-        if (factoryVersion.compareTo(OFVersion.OF_10) != 0) {
-            fmb.setTableId(FLOWMOD_DEFAULT_TABLE_ID);
+        // Prepare GroupModBuilder
+        OFGroupMod.Builder groupModBuilder;
+        switch (groupModCommand) {
+        case DELETE:
+        	groupModBuilder = factory.buildGroupDelete();
+            break;
+        default:
+            log.error("Could not decode OFGroupModCommand. Using ADD. " +
+        			"(Should another be used as the default?)");        
+        case MODIFY:
+        case ADD:
+        	groupModBuilder = factory.buildGroupAdd();
+            break;
         }
         
-		/*  
-		 * Push multicast packet out of first hop (source) switch
-		 */
-    	if (isSrcSw &&
-    			!fmb.getCommand().equals(OFFlowModCommand.DELETE) &&
-                !fmb.getCommand().equals(OFFlowModCommand.DELETE_STRICT)) {
-    		pushMulticastPacket(sw, pi, outPorts, cntx, gatewayMac);
+        // Calculate GroupId
+        int groupId = (int) ((AppCookie.extractUser(cookie) & FLOWSET_MASK) >> 
+    				(FLOWSET_SHIFT - 8)); // 24 flowset bits + 8 bit padding = 32 bit
+        OFGroup group = OFGroup.of(groupId);
+        
+        // Set Identifier
+        OFGroupType groupType = OFGroupType.ALL;
+        groupModBuilder.setXid(0)
+        .setGroup(group)
+        .setGroupType(groupType);
+        
+        if (!groupModBuilder.getCommand().equals(OFGroupModCommand.DELETE)) {
+        	// Prepare Bucket List
+        	List<OFBucket> bucketList = new ArrayList<OFBucket>();
+        	
+	        for (OFPort outPort: outPorts) {
+	        	MacAddress gatewayMac = MacAddress.NONE;
+	        	if (isL3) {
+		            Optional<VirtualGatewayInstance> gatewayInstance = getGatewayInstance(swId);
+		            if (!gatewayInstance.isPresent()) {
+		            	gatewayInstance = getGatewayInstance(new NodePortTuple(swId, outPort));
+		            }
+		        	if (gatewayInstance.isPresent()) {
+		        		gatewayMac = gatewayInstance.get().getGatewayMac();
+		        	}
+	        	}
+	        	
+	        	// Prepare Action List
+	        	List<OFAction> actions = new ArrayList<>();
+	        	
+	            OFActionOutput.Builder aob = factoryActions.buildOutput();
+	            aob.setMaxLen(Integer.MAX_VALUE);
+	            aob.setPort(outPort);
+	            actions.add(aob.build());
+	            
+	            if (!gatewayMac.equals(MacAddress.NONE)) {
+	                switch (factoryVersion) {
+	                    case OF_10:
+	                    case OF_11:
+	                        actions.add(factoryActions.setDlSrc(gatewayMac));
+	                        break;
+	                    case OF_12:
+	                    case OF_13:
+	                    case OF_14:
+	                    case OF_15:
+	                        actions.add(factoryActions.setField(factory.oxms().ethSrc(gatewayMac)));
+	                        break;
+	                    default:
+	                        break;
+	                }
+	    		}
+	            
+	            // Update Bucket List
+	            OFBucket myBucket = factory.buildBucket()
+	            	    .setActions(actions)
+	            	    .setWatchGroup(OFGroup.ANY)
+	            	    .setWatchPort(OFPort.ANY)
+	            	    .build();
+	            bucketList.add(myBucket);
+	        }
+	        
+	        // Update GroupModBuilder
+	        groupModBuilder.setBuckets(bucketList);
         }
+        
+        // Create GroupMod
+        OFGroupMod groupMod = groupModBuilder.build();
+        
+        return groupMod;
+	}
+	
+    /**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Create Multicast Flow Mod for the Switch
+     * 
+     * @param sw Switch to p
+     * @param inPort Input port of the switch
+     * @param match OpenFlow fields to match on
+     * @param cookie The cookie to set in each flow_mod
+     * @param flowModCommand flow mod. command to use, e.g. OFFlowMod.OFPFC_ADD,
+     *        OFFlowMod.OFPFC_MODIFY etc.
+     *        
+     * @return
+     */
+    private OFFlowMod createMulticastFlowModMsg(IOFSwitch sw, OFPort inPort, Match match, 
+    		U64 cookie, OFFlowModCommand flowModCommand) {
+        OFFactory factory = sw.getOFFactory();
+        OFActions factoryActions = factory.actions();
+        OFVersion factoryVersion = factory.getVersion();
+        OFInstructions factoryInstructions = factory.instructions();
     	
-    	/* 
-    	 * Install flowmod in the switch 
-    	 */
-        if (OFDPAUtils.isOFDPASwitch(sw)) {
-        	List<Map.Entry<VlanVid, OFPort>> outVlanPortTable = new ArrayList<Map.Entry<VlanVid, OFPort>>();
-        	for (OFPort outPort: outPorts) {
-        		outVlanPortTable.add(new AbstractMap.SimpleEntry<VlanVid, OFPort>(VlanVid.ZERO, outPort));
-        	}
-            OFDPAUtils.addLearningSwitchFlow(sw, cookie, 
-                    FLOWMOD_DEFAULT_PRIORITY, 
-                    FLOWMOD_DEFAULT_HARD_TIMEOUT,
-                    FLOWMOD_DEFAULT_IDLE_TIMEOUT,
-                    fmb.getMatch(), 
-                    outVlanPortTable); // TODO how to determine output VLAN for lookup of L2 interface group
+    	// Prepare FlowModBuilder
+        OFFlowMod.Builder flowModBuilder;
+        switch (flowModCommand) {
+        case DELETE_STRICT:
+        case DELETE:
+        	flowModBuilder = factory.buildFlowDelete();
+            break;
+        default:
+            log.error("Could not decode OFFlowModCommand. Using ADD. " +
+        			"(Should another be used as the default?)");        
+        case MODIFY:
+        case MODIFY_STRICT:
+        case ADD:
+        	flowModBuilder = factory.buildFlowAdd();
+            break;
+        }
+        
+        // Prepare Match
+        Match.Builder matchBuilder = MatchUtils.convertToVersion(match, factoryVersion);
+        if (FLOWMOD_DEFAULT_MATCH_IN_PORT) {
+        	matchBuilder.setExact(MatchField.IN_PORT, inPort);
+        }
+        match = matchBuilder.build();
+        
+        // Set FlowMod Identifier
+        flowModBuilder.setXid(0)
+        .setMatch(match)
+        .setPriority(FLOWMOD_DEFAULT_PRIORITY)
+        .setCookieMask(U64.ZERO);
+        
+        if (factoryVersion.compareTo(OFVersion.OF_10) != 0) {
+        	flowModBuilder.setTableId(FLOWMOD_DEFAULT_TABLE_ID);
+        }
+        
+        if (flowModBuilder.getCommand().equals(OFFlowModCommand.DELETE)) {
+        	flowModBuilder.setCookie(U64.ZERO)
+        	.setOutPort(OFPort.ANY)
+        	.setOutGroup(OFGroup.ANY);
         }
         else {
-            messageDamper.write(sw, fmb.build());
+	        // Calculate GroupId
+            int groupId = (int) ((AppCookie.extractUser(cookie) & FLOWSET_MASK) >> 
+        				(FLOWSET_SHIFT - 8)); // 24 flowset bits + 8 bit padding = 32 bit
+            OFGroup group = OFGroup.of(groupId);
+	        
+	        // Prepare Actions
+	        List<OFAction> actionList = new ArrayList<>();
+	        OFActionGroup ofActionGroup = factoryActions.buildGroup()
+	        		.setGroup(group)
+	        		.build();
+			actionList.add(ofActionGroup);
+	        
+			// Prepare Instructions by adding actionList to instructionApplyActions
+			ArrayList<OFInstruction> instructions = new ArrayList<>();
+			OFInstructionApplyActions instructionApplyActions = 
+					factoryInstructions.buildApplyActions()
+				    .setActions(actionList)
+				    .build();
+			instructions.add(instructionApplyActions);
+			
+			// Update FlowModBuilder
+			flowModBuilder
+			.setActions(actionList)
+			.setInstructions(instructions)
+	        .setCookie(cookie)
+	        .setIdleTimeout(FLOWMOD_DEFAULT_IDLE_TIMEOUT)
+	        .setHardTimeout(FLOWMOD_DEFAULT_HARD_TIMEOUT)
+	        .setBufferId(OFBufferId.NO_BUFFER);
+			
+	        Set<OFFlowModFlags> flags = new HashSet<>();
+	        flags.add(OFFlowModFlags.SEND_FLOW_REM);
+	        flags.add(OFFlowModFlags.CHECK_OVERLAP);
+	        flowModBuilder.setFlags(flags);
         }
+    	
+        // Create FlowMod
+    	OFFlowMod flowMod = flowModBuilder.build();
+    	
+    	return flowMod;
 	}
     
     /**
      * @author Souvik Das (souvikdas95@yahoo.co.in)
      * 
-     * Pushes a multicast packet-out to a switch.
+     * Create Multicast Packet Out for the Switch
      * 
      * @param sw switch that generated the packet-in, and from which packet-out is sent
+     * @param edgePorts attachment point (edge) ports
      * @param pi packet-in
-     * @param outports output ports
      * @param cntx context of the packet
      * @param gatewayMac MacAddress of the Gateway Interface
      * 
      * @return
      */
-    protected void pushMulticastPacket(IOFSwitch sw, OFPacketIn pi, Set<OFPort> outports, 
-    		FloodlightContext cntx, MacAddress gatewayMac) {
-        if (pi == null || outports.isEmpty()) {
-            return;
+    protected OFPacketOut createMulticastPacketOutMsg(IOFSwitch sw, Set<OFPort> edgePorts, 
+    		OFPacketIn pi, FloodlightContext cntx, MacAddress gatewayMac) {
+        if (pi == null || edgePorts.isEmpty()) {
+            return null;
         }
         
-        OFPacketOut.Builder pob = sw.getOFFactory().buildPacketOut();
+        OFFactory factory = sw.getOFFactory();
+        OFPacketOut.Builder pob = factory.buildPacketOut();
+        pob.setXid(pi.getXid());
         List<OFAction> actions = new ArrayList<>();
-        for (OFPort outport: outports) {
-        	actions.add(sw.getOFFactory().actions().output(outport, Integer.MAX_VALUE));
+        for (OFPort edgePort: edgePorts) {
+        	actions.add(factory.actions().output(edgePort, Integer.MAX_VALUE));
         }
         pob.setActions(actions);
 
@@ -932,8 +1136,57 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         }
 
         OFMessageUtils.setInPort(pob, OFMessageUtils.getInPort(pi));
-        messageDamper.write(sw, pob.build());
+        
+        return pob.build();
     }
+    
+    /**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Processes flow removed message
+     * 
+     * @param sw switch
+     * @param fr flowRemoved packet
+     * @param cntx The FloodlightContext associated with this OFPacketIn
+     * 
+     * @return
+     */
+	@Override
+	public Command processFlowRemovedMessage(IOFSwitch sw, OFFlowRemoved fr, 
+			FloodlightContext cntx) {
+		Match match = fr.getMatch();
+		
+		/* 
+		 * Delete GroupMod if a FlowMod is removed 
+		 * with destinationIp as a multicast address
+		 */
+		IPAddress<?> dstIp = match.get(MatchField.IPV4_DST);
+		if (dstIp == null) {
+			dstIp = match.get(MatchField.IPV6_DST);
+		}
+		if (dstIp != null &&
+				dstIp.isMulticast()) {
+			U64 cookie = fr.getCookie();
+			OFGroupMod groupModMsg = createMulticastGroupModMsg(sw, null, cookie, 
+					OFGroupModCommand.DELETE, false);
+	        if (groupModMsg == null) {
+	            if (log.isErrorEnabled()) {
+	                log.error("Switch at DPID {} " +
+	                		"failed to create Multicast Group Mod message", sw);
+	            }
+	        }
+	        else {
+	        	if (!sw.write(groupModMsg)) {
+	                if (log.isErrorEnabled()) {
+	                    log.error("Message couldn't be sent to switch at DPID {} " + 
+	                    		"due to channel disconnect", sw);
+	                }
+	        	}
+	        }
+		}
+
+		return Command.CONTINUE;
+	}
     
 	/**
      * Virtual gateway insert flows on switch to rewrite source MAC to gateway MAC, also rewrite destination MAC
@@ -2313,6 +2566,4 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         log.error("Could not locate a 'true' attachment point in {}", aps);
         return null;
     }
-
-
 }

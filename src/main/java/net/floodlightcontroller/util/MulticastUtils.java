@@ -7,6 +7,12 @@ import org.projectfloodlight.openflow.types.IPAddress;
 import org.projectfloodlight.openflow.types.IPv4Address;
 import org.projectfloodlight.openflow.types.IPv6Address;
 
+/**
+ * @author Souvik Das (souvikdas95@yahoo.co.in)
+ * 
+ * Utility methods for Multicasting
+ * 
+ */ 
 public class MulticastUtils {
     /*
      * Generates MgId from Mcast IPAddress (For internal use only)

@@ -5,95 +5,24 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.HashMap;
-import java.util.concurrent.Semaphore;
 
 import org.projectfloodlight.openflow.types.IPAddress;
 import org.python.google.common.collect.ImmutableSet;
 
 import net.floodlightcontroller.devicemanager.IDevice;
+import net.floodlightcontroller.util.RWSync;
 
-/*
+/**
+ * @author Souvik Das (souvikdas95@yahoo.co.in)
+ * 
  * Participant table that maps b/w Multicast IP and Devices
+ * 
  */
 public class ParticipantTable {
 	private final Map<IPAddress<?>, Set<IDevice>> mcastToDeviceMap;
 	private final Map<IDevice, Set<IPAddress<?>>> deviceToMcastMap;
 	
 	// Reader-Writer Synchronization Class & Object
-	private final class RWSync {
-		private final Semaphore in;
-		private final Semaphore out;
-		private final Semaphore wrt;
-		private int ctrin;
-		private int ctrout;
-		private boolean wait;
-		
-		protected RWSync() {
-			in = new Semaphore(1);
-			out = new Semaphore(1);
-			wrt = new Semaphore(0);
-			ctrin = 0;
-			ctrout = 0;
-			wait = false;
-		}
-		
-		private final void reset() {
-			in.release();
-			out.release();
-			wrt.tryAcquire();
-			ctrin = 0;
-			ctrout = 0;
-			wait = false;
-		}
-		
-		protected final void readLock() {
-			try {
-				in.acquire();
-				ctrin++;
-				in.release();
-			}
-			catch (InterruptedException e) {
-				reset();
-			}
-		}
-		
-		protected final void readUnlock() {
-			try {
-				out.acquire();
-				ctrout++;
-				if (wait && ctrin == ctrout) {
-					wrt.release();
-				}
-				out.release();
-			}
-			catch (InterruptedException e) {
-				reset();
-			}
-		}
-		
-		protected final void writeLock() {
-			try {
-				in.acquire();
-				out.acquire();
-				if (ctrin == ctrout) {
-					out.release();
-				}
-				else {
-					wait = true;
-					out.release();
-					wrt.acquire();
-					wait = false;
-				}
-			}
-			catch (InterruptedException e) {
-				reset();
-			}
-		}
-		
-		protected final void writeUnlock() {
-			in.release();
-		}
-	};
 	private final RWSync rwSync;
 	
 	public ParticipantTable() {
