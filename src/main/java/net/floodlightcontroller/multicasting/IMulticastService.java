@@ -7,6 +7,12 @@ import org.projectfloodlight.openflow.types.IPAddress;
 import net.floodlightcontroller.core.module.IFloodlightService;
 import net.floodlightcontroller.devicemanager.IDevice;
 
+/**
+ * @author Souvik Das (souvikdas95@yahoo.co.in)
+ * 
+ * Service Interface for Multicasting
+ * 
+ */ 
 public interface IMulticastService extends IFloodlightService {
 	public void addParticipant(IPAddress<?> mcastAddress, IDevice device);
 	

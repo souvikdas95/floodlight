@@ -4,6 +4,12 @@ import org.projectfloodlight.openflow.types.IPAddress;
 
 import net.floodlightcontroller.devicemanager.IDevice;
 
+/**
+ * @author Souvik Das (souvikdas95@yahoo.co.in)
+ * 
+ * Listener Interface for Multicasting
+ * 
+ */ 
 public interface IMulticastListener {
 	void ParticipantAdded(IPAddress<?> mcastAddress, IDevice device);
 	
