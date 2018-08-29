@@ -4,6 +4,12 @@ import java.math.BigInteger;
 
 import org.projectfloodlight.openflow.types.DatapathId;
 
+/**
+ * @author Souvik Das (souvikdas95@yahoo.co.in)
+ * 
+ * MulticastPathId implementation
+ * 
+ */
 public class MulticastPathId implements Cloneable, Comparable<MulticastPathId> {
     protected DatapathId src;
     protected BigInteger mgId;

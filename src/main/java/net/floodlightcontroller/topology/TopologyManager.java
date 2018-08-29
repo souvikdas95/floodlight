@@ -1359,7 +1359,10 @@ IOFMessageListener {
     }
     
     /**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
      * Multicast Participant Methods to update MulticastGroups and MulticastPaths
+     * 
      */
 	@Override
 	public void ParticipantAdded(IPAddress<?> mcastAddress, IDevice device) {

@@ -24,7 +24,8 @@ import net.floodlightcontroller.multicasting.IMulticastService;
  * 
  * MulticastManager is only a service gateway between ParticipantTable
  * in Multicast Service and the MulticastGroups & MulticastPaths in 
- * Topology Service
+ * Topology Service.
+ * 
  */
 public class MulticastManager implements IFloodlightModule, IMulticastService, IDeviceListener {
 	

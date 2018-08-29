@@ -16,6 +16,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.HashMap;
 
+/**
+ * @author Souvik Das (souvikdas95@yahoo.co.in)
+ * 
+ * MulticastPath implementation
+ * 
+ */
 @JsonSerialize(using=PathSerializer.class)
 public class MulticastPath implements Comparable<MulticastPath> {
     protected MulticastPathId id;
