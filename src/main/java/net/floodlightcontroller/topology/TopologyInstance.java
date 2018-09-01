@@ -42,6 +42,7 @@ import org.slf4j.LoggerFactory;
 import java.math.BigInteger;
 import java.util.*;
 import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -140,7 +141,7 @@ public class TopologyInstance {
         this.portsBroadcastPerSwitch = new HashMap<DatapathId,Set<OFPort>>();
 
         this.pathcache = new HashMap<PathId, List<Path>>();
-        this.pathcacheMF = new HashMap<MulticastPathId, MulticastPath>();
+        this.pathcacheMF = new ConcurrentHashMap<MulticastPathId, MulticastPath>();
 
         this.portsBroadcastPerArchipelago = new HashMap<DatapathId, Set<NodePortTuple>>();
 

@@ -18,7 +18,7 @@ public class Archipelago {
     private DatapathId id; // the lowest id of the nodes
     private final Set<Cluster> clusters;
     private BroadcastTree destinationRootedFullTree;
-    private final Map<BigInteger, MulticastGroup> multicastGroups;
+    private transient final Map<BigInteger, MulticastGroup> multicastGroups;
 
     public Archipelago() {
         id = DatapathId.NONE;
