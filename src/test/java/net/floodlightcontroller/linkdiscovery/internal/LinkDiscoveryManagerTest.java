@@ -49,6 +49,8 @@ import net.floodlightcontroller.debugcounter.MockDebugCounterService;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryListener;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
 import net.floodlightcontroller.linkdiscovery.Link;
+import net.floodlightcontroller.multicasting.IMulticastService;
+import net.floodlightcontroller.multicasting.internal.MulticastManager;
 import net.floodlightcontroller.packet.Data;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.IPacket;
@@ -151,6 +153,7 @@ public class LinkDiscoveryManagerTest extends FloodlightTestCase {
         cntx.addService(IFloodlightProviderService.class, getMockFloodlightProvider());
         cntx.addService(IDebugCounterService.class, debugCounterService);
         cntx.addService(IOFSwitchService.class, getMockSwitchService());
+        cntx.addService(IMulticastService.class, new MulticastManager());
         restApi.init(cntx);
         tp.init(cntx);
         routingEngine.init(cntx);
