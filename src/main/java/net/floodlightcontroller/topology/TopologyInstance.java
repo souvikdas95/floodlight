@@ -959,8 +959,12 @@ public class TopologyInstance {
     }
 
     private Archipelago getArchipelago(DatapathId d) {
-    	Cluster c = clusterFromSwitch.get(d);
-        return archipelagoFromCluster.get(c);
+        for (Archipelago a : archipelagos) {
+            if (a.getSwitches().contains(d)) {
+                return a;
+            }
+        }
+        return null;
     }
 
     public void setPathCosts(Path p, Map<Link, Integer> linkCost) {
