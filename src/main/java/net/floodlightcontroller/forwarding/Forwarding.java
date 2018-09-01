@@ -109,6 +109,8 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
     private Map<OFPacketIn, Ethernet> l3cache;
     private DeviceListenerImpl deviceListener;
 
+    protected static boolean MULTICAST_DEFAULT_PACKETOUT_FLOOD = false;
+
     protected static class FlowSetIdRegistry {
         private volatile Map<NodePortTuple, Set<U64>> nptToFlowSetIds;
         private volatile Map<U64, Set<NodePortTuple>> flowSetIdToNpts;
@@ -554,22 +556,28 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         IDevice srcDevice = IDeviceService.fcStore.get(cntx, IDeviceService.CONTEXT_SRC_DEVICE);
         
         if (srcDevice == null) {
-            log.error("No device entry found for source device. Is the device manager running? If so, report bug.");
+            if (log.isErrorEnabled()) {
+                log.error("No device entry found for source device. Is the device manager running? If so, report bug.");
+            }
             return;
         }
 
         /* Some physical switches partially support or do not support ARP flows */
         if (FLOOD_ALL_ARP_PACKETS &&
         		eth.getEtherType() == EthType.ARP) {
-            log.debug("ARP flows disabled in Forwarding. Flooding ARP packet");
+            if (log.isDebugEnabled()) {
+                log.debug("ARP flows disabled in Forwarding. Flooding ARP packet");
+            }
             doFlood(sw, pi, decision, cntx);
             return;
         }
 
         /* This packet-in is from a switch in the path before its flow was installed along the path */
         if (!topologyService.isEdge(curSwId, inPort)) {
-            log.debug("Packet destination is known, but packet was not received on an edge port (rx on {}/{}). " + 
+            if (log.isDebugEnabled()) {
+                log.debug("Packet destination is known, but packet was not received on an edge port (rx on {}/{}). " + 
             		"Flooding packet", curSwId, inPort);
+            }
             doFlood(sw, pi, decision, cntx);
             return;
         }
@@ -601,6 +609,11 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 	                log.debug("Creating flow rules on the route, match rule: {}", m);
 	            }
 
+	            if (MULTICAST_DEFAULT_PACKETOUT_FLOOD) {
+	            	doFlood(sw, pi, decision, cntx);
+	            	pi = null;
+	            }
+
 	            pushMulticastPath(mPath, m, pi, sw.getId(), inPort, cookie,
 	                    cntx, OFFlowModCommand.ADD, isL3);
 
@@ -620,10 +633,12 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 	            }
 			} /* else no path was found */
 	        else {
-                log.debug("Flooding because path doesn't exist for swId={} inPort={}" +
+                if (log.isDebugEnabled()) {
+                    log.debug("Flooding because path doesn't exist for swId={} inPort={}" +
                         "destination={}({})",
-                new Object[] { curSwId, inPort,
+                        new Object[] { curSwId, inPort,
                 		dstIp, mgId});
+                }
                 doFlood(sw, pi, decision, cntx);
 	        }
         }
@@ -726,10 +741,10 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
             }
             List<OFMessage> msgList = new ArrayList<OFMessage>();
         	
-            // Get inPort, edgePorts, outPorts of the switch
+            // Get inPort, apPorts, outPorts of the switch
             OFPort inPort = swInPort.get(swId);
             Set<OFPort> outPorts = swOutPorts.get(swId);
-            Set<OFPort> edgePorts = mPath.getApPorts(swId);
+            Set<OFPort> apPorts = mPath.getApPorts(swId);
             if (log.isTraceEnabled()) {
                 log.trace(String.format("pushMulticastPath: Switch: {s%d}, inPort: {%s}, " +
                 		" outPorts: {%s}", 
@@ -754,14 +769,15 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
             }
             
             // Build PacketOut message (for edge destinations)
-            if (!edgePorts.isEmpty()) {
+            if (pi != null &&
+                !apPorts.isEmpty()) {
 	            if (isL3) {
 		            Optional<VirtualGatewayInstance> simpleGatewayInstance = 
 		            		getGatewayInstance(swId);
 		            if (simpleGatewayInstance.isPresent()) {
 		            	MacAddress simpleGatewayMac = simpleGatewayInstance.get()
 		            			.getGatewayMac();
-		                OFPacketOut packetOutMsg = createMulticastPacketOutMsg(sw, edgePorts, 
+		                OFPacketOut packetOutMsg = createMulticastPacketOutMsg(sw, apPorts, 
 		                		pi, cntx, simpleGatewayMac);
 		                if (packetOutMsg == null) {
 		                    if (log.isErrorEnabled()) {
@@ -773,13 +789,13 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 		            	msgList.add(packetOutMsg);
 		            }
 		            else {
-		            	for (OFPort edgePort: edgePorts) {
+		            	for (OFPort apPort: apPorts) {
 		            		Optional<VirtualGatewayInstance> gatewayInstance = 
-		            				getGatewayInstance(new NodePortTuple(swId, edgePort));
+		            				getGatewayInstance(new NodePortTuple(swId, apPort));
 		            		if (gatewayInstance.isPresent()) {
 		            			MacAddress gatewayMac = gatewayInstance.get().getGatewayMac();
 		                        OFPacketOut packetOutMsg = createMulticastPacketOutMsg(sw, 
-		                        		new HashSet<OFPort>(Arrays.asList(edgePort)), pi, cntx, 
+		                        		new HashSet<OFPort>(Arrays.asList(apPort)), pi, cntx, 
 		                        		gatewayMac);
 		                        if (packetOutMsg == null) {
 		                            if (log.isErrorEnabled()) {
@@ -794,7 +810,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 		            }
 	            }
 	            else {
-	                OFPacketOut packetOutMsg = createMulticastPacketOutMsg(sw, edgePorts, 
+	                OFPacketOut packetOutMsg = createMulticastPacketOutMsg(sw, apPorts, 
 	                		pi, cntx, MacAddress.NONE);
 	                if (packetOutMsg == null) {
 	                    if (log.isErrorEnabled()) {
@@ -1090,16 +1106,16 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
      * Create Multicast Packet Out for the Switch
      * 
      * @param sw switch that generated the packet-in, and from which packet-out is sent
-     * @param edgePorts attachment point (edge) ports
+     * @param apPorts attachment point (edge) ports
      * @param pi packet-in
      * @param cntx context of the packet
      * @param gatewayMac MacAddress of the Gateway Interface
      * 
      * @return
      */
-    protected OFPacketOut createMulticastPacketOutMsg(IOFSwitch sw, Set<OFPort> edgePorts, 
+    protected OFPacketOut createMulticastPacketOutMsg(IOFSwitch sw, Set<OFPort> apPorts, 
     		OFPacketIn pi, FloodlightContext cntx, MacAddress gatewayMac) {
-        if (pi == null || edgePorts.isEmpty()) {
+        if (pi == null || apPorts.isEmpty()) {
             return null;
         }
         
@@ -1107,8 +1123,8 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         OFPacketOut.Builder pob = factory.buildPacketOut();
         pob.setXid(pi.getXid());
         List<OFAction> actions = new ArrayList<>();
-        for (OFPort edgePort: edgePorts) {
-        	actions.add(factory.actions().output(edgePort, Integer.MAX_VALUE));
+        for (OFPort apPort: apPorts) {
+        	actions.add(factory.actions().output(apPort, Integer.MAX_VALUE));
         }
         pob.setActions(actions);
 
