@@ -22,6 +22,7 @@ import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.core.types.MacVlanPair;
 import net.floodlightcontroller.core.types.NodePortTuple;
 import net.floodlightcontroller.core.util.SingletonTask;
 import net.floodlightcontroller.debugcounter.IDebugCounter;
@@ -29,6 +30,8 @@ import net.floodlightcontroller.debugcounter.IDebugCounterService;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryListener;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
 import net.floodlightcontroller.linkdiscovery.Link;
+import net.floodlightcontroller.multicasting.IMulticastListener;
+import net.floodlightcontroller.multicasting.IMulticastService;
 import net.floodlightcontroller.packet.BSN;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.LLDP;
@@ -38,11 +41,13 @@ import net.floodlightcontroller.routing.web.RoutingWebRoutable;
 import net.floodlightcontroller.statistics.IStatisticsService;
 import net.floodlightcontroller.threadpool.IThreadPoolService;
 import net.floodlightcontroller.topology.web.TopologyWebRoutable;
+import net.floodlightcontroller.util.MulticastUtils;
 import net.floodlightcontroller.util.OFMessageUtils;
 import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.types.DatapathId;
+import org.projectfloodlight.openflow.types.IPAddress;
 import org.projectfloodlight.openflow.types.OFBufferId;
 import org.projectfloodlight.openflow.types.OFPort;
 import org.projectfloodlight.openflow.types.U64;
@@ -51,6 +56,7 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.ImmutableSet;
 
+import java.math.BigInteger;
 import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -63,7 +69,8 @@ import java.util.concurrent.TimeUnit;
  * through the topology.
  */
 public class TopologyManager implements IFloodlightModule, ITopologyService, 
-ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
+ITopologyManagerBackend, IMulticastListener, ILinkDiscoveryListener, 
+IOFMessageListener {
     private static Logger log = LoggerFactory.getLogger(TopologyManager.class);
     public static final String MODULE_NAME = "topology";
 
@@ -111,6 +118,7 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
     protected static IRestApiService restApiService;
     protected static IDebugCounterService debugCounterService;
     protected static IStatisticsService statisticsService;
+    protected static IMulticastService multicastService;
 
     // Modules that listen to our updates
     protected ArrayList<ITopologyListener> topologyAware;
@@ -147,7 +155,7 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
      */
     protected static final String PACKAGE = TopologyManager.class.getPackage().getName();
     protected IDebugCounter ctrIncoming;
-
+    
     //  Getter/Setter methods
     /**
      * Get the time interval for the period topology updates, if any.
@@ -589,6 +597,7 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
         l.add(IOFSwitchService.class);
         l.add(IDebugCounterService.class);
         l.add(IRestApiService.class);
+        l.add(IMulticastService.class);
         return l;
     }
 
@@ -602,6 +611,7 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
         restApiService = context.getServiceImpl(IRestApiService.class);
         debugCounterService = context.getServiceImpl(IDebugCounterService.class);
         statisticsService = context.getServiceImpl(IStatisticsService.class);
+        multicastService = context.getServiceImpl(IMulticastService.class);
 
         switchPorts = new HashMap<DatapathId, Set<OFPort>>();
         switchPortLinks = new HashMap<NodePortTuple, Set<Link>>();
@@ -668,6 +678,7 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
         }
 
         linkDiscoveryService.addListener(this);
+        multicastService.addListener(this);
         floodlightProviderService.addOFMessageListener(OFType.PACKET_IN, this);
         floodlightProviderService.addHAListener(this.haListener);
         addRestletRoutable();
@@ -1346,4 +1357,48 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
         /* cannot invoke scheduled executor, since the update might not occur */
         return updateTopology("forced-recomputation", true);
     }
+
+    /**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Multicast Participant Methods to update MulticastGroups and MulticastPaths
+     * 
+     */
+	@Override
+	public void ParticipantAdded(IPAddress<?> group, MacVlanPair intf, NodePortTuple ap) {
+		BigInteger mgId = MulticastUtils.MgIdFromMcastIP(group);
+		TopologyInstance ti = getCurrentInstance();
+		ti.addParticipant(mgId, intf, ap, true);
+	}
+
+	@Override
+	public void ParticipantRemoved(IPAddress<?> group, MacVlanPair intf, NodePortTuple ap) {
+		BigInteger mgId = MulticastUtils.MgIdFromMcastIP(group);
+		TopologyInstance ti = getCurrentInstance();
+		ti.removeParticipant(mgId, intf, ap);
+	}
+
+	@Override
+	public void ParticipantGroupRemoved(IPAddress<?> group) {
+		BigInteger mgId = MulticastUtils.MgIdFromMcastIP(group);
+		TopologyInstance ti = getCurrentInstance();
+		for (MacVlanPair intf: multicastService.getParticipantIntfs(group)) {
+			ti.removeParticipant(mgId, intf, null);
+		}
+	}
+
+	@Override
+	public void ParticipantIntfRemoved(MacVlanPair intf) {
+		TopologyInstance ti = getCurrentInstance();
+		for (IPAddress<?> group: multicastService.getParticipantGroups(intf)) {
+			BigInteger mgId = MulticastUtils.MgIdFromMcastIP(group);
+			ti.removeParticipant(mgId, intf, null);
+		}
+	}
+	
+	@Override
+	public void ParticipantsReset() {
+		TopologyInstance ti = getCurrentInstance();
+		ti.clearParticipants();
+	}
 }

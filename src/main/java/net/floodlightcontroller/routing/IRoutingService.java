@@ -17,6 +17,7 @@
 
 package net.floodlightcontroller.routing;
 
+import java.math.BigInteger;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -211,4 +212,17 @@ public interface IRoutingService extends IFloodlightService {
      * @return true upon success; false otherwise
      */
     boolean forceRecompute();
+    
+	/**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Retrieves end-to-end path b/w srcSwId
+     * at srcwPort and mgId
+     * 
+     * @param srcSwId
+     * @param mgId
+     * 
+     * @return MulticastPath
+     */
+    MulticastPath getMulticastPath(DatapathId srcSwId, BigInteger mgId);
 }

@@ -6,18 +6,25 @@ package net.floodlightcontroller.topology;
 import net.floodlightcontroller.routing.BroadcastTree;
 import org.projectfloodlight.openflow.types.DatapathId;
 
+import java.math.BigInteger;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 public class Archipelago {
     private DatapathId id; // the lowest id of the nodes
     private final Set<Cluster> clusters;
     private BroadcastTree destinationRootedFullTree;
+    private final Map<BigInteger, MulticastGroup> multicastGroups;
 
     public Archipelago() {
         id = DatapathId.NONE;
         clusters = new HashSet<Cluster>();
         destinationRootedFullTree = null;
+        multicastGroups = new HashMap<BigInteger, MulticastGroup>();
     }
 
     public DatapathId getId() {
@@ -73,6 +80,38 @@ public class Archipelago {
         destinationRootedFullTree = bt;
     }
 
+    void addMulticastGroup(MulticastGroup mg) {
+    	multicastGroups.put(mg.getId(), mg);
+    }
+    
+    void removeMulticastGroup(MulticastGroup mg) {
+    	removeMulticastGroup(mg.getId());
+    }
+    
+    void removeMulticastGroup(BigInteger mgId) {
+    	multicastGroups.remove(mgId);
+    }
+    
+    boolean hasMulticastGroup(MulticastGroup mg) {
+    	return hasMulticastGroup(mg.getId());
+    }
+    
+    boolean hasMulticastGroup(BigInteger mgId) {
+    	return multicastGroups.containsKey(mgId);
+    }
+    
+    MulticastGroup getMulticastGroup(BigInteger mgId) {
+    	return multicastGroups.get(mgId);
+    }
+    
+    Collection<MulticastGroup> getMulticastGroups() {
+    	return Collections.unmodifiableCollection(multicastGroups.values());
+    }
+    
+    void clearMulticastGroups() {
+    	multicastGroups.clear();
+    }
+    
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
