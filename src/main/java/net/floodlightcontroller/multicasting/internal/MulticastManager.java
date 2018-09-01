@@ -41,7 +41,8 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
      */
     private static ParticipantTable participantTable = new ParticipantTable();
 	
-	private Set<IMulticastListener> multicastingListeners;
+	private static Set<IMulticastListener> multicastListeners = 
+			new HashSet<IMulticastListener>();
 	
 	// private IFloodlightProviderService floodlightProviderService;
 	private ITopologyService topologyService;
@@ -75,8 +76,6 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 	
 	@Override
 	public void init(FloodlightModuleContext context) throws FloodlightModuleException {
-		multicastingListeners = new HashSet<IMulticastListener>();
-		
 		// floodlightProviderService = context.getServiceImpl(IFloodlightProviderService.class);
 		topologyService = context.getServiceImpl(ITopologyService.class);
 		deviceService = context.getServiceImpl(IDeviceService.class);
@@ -91,7 +90,7 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 	public void addParticipant(IPAddress<?> group, MacVlanPair intf, NodePortTuple ap) {
 		Set<NodePortTuple> attachmentPoints = participantTable.getAttachmentPoints(group, intf);
 		if (attachmentPoints.isEmpty() || !attachmentPoints.contains(ap)) {
-			for (IMulticastListener multicastingListener: multicastingListeners) {
+			for (IMulticastListener multicastingListener: multicastListeners) {
 				multicastingListener.ParticipantAdded(group, intf, ap);
 			}
 			
@@ -103,7 +102,7 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 	public void removeParticipant(IPAddress<?> group, MacVlanPair intf, NodePortTuple ap) {
 		Set<NodePortTuple> attachmentPoints = participantTable.getAttachmentPoints(group, intf);
 		if (attachmentPoints.isEmpty() && attachmentPoints.contains(ap)) {
-			for (IMulticastListener multicastingListener: multicastingListeners) {
+			for (IMulticastListener multicastingListener: multicastListeners) {
 				multicastingListener.ParticipantRemoved(group, intf, ap);
 			}
 			
@@ -154,7 +153,7 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 	@Override
 	public void deleteParticipantGroup(IPAddress<?> group) {
 		if (participantTable.hasGroup(group)) {
-			for (IMulticastListener multicastingListener: multicastingListeners) {
+			for (IMulticastListener multicastingListener: multicastListeners) {
 				multicastingListener.ParticipantGroupRemoved(group);
 			}
 			
@@ -165,7 +164,7 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 	@Override
 	public void deleteParticipantIntf(MacVlanPair intf) {
 		if (participantTable.hasIntf(intf)) {
-			for (IMulticastListener multicastingListener: multicastingListeners) {
+			for (IMulticastListener multicastingListener: multicastListeners) {
 				multicastingListener.ParticipantIntfRemoved(intf);
 			}
 			
@@ -175,7 +174,7 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 
 	@Override
 	public void clearAllParticipants() {
-		for (IMulticastListener multicastingListener: multicastingListeners) {
+		for (IMulticastListener multicastingListener: multicastListeners) {
 			multicastingListener.ParticipantsReset();
 		}
 		
@@ -184,12 +183,12 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 	
 	@Override
 	public void addListener(IMulticastListener listener) {
-		multicastingListeners.add(listener);
+		multicastListeners.add(listener);
 	}
 	
 	@Override
 	public void removeListener(IMulticastListener listener) {
-		multicastingListeners.remove(listener);
+		multicastListeners.remove(listener);
 	}
 
 	@Override
