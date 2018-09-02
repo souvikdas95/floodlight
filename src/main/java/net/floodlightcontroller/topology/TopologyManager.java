@@ -22,6 +22,7 @@ import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.core.types.MacVlanPair;
 import net.floodlightcontroller.core.types.NodePortTuple;
 import net.floodlightcontroller.core.util.SingletonTask;
 import net.floodlightcontroller.debugcounter.IDebugCounter;
@@ -29,6 +30,8 @@ import net.floodlightcontroller.debugcounter.IDebugCounterService;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryListener;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
 import net.floodlightcontroller.linkdiscovery.Link;
+import net.floodlightcontroller.multicasting.IMulticastListener;
+import net.floodlightcontroller.multicasting.IMulticastService;
 import net.floodlightcontroller.packet.BSN;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.LLDP;
@@ -43,6 +46,7 @@ import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.types.DatapathId;
+import org.projectfloodlight.openflow.types.IPAddress;
 import org.projectfloodlight.openflow.types.OFBufferId;
 import org.projectfloodlight.openflow.types.OFPort;
 import org.projectfloodlight.openflow.types.U64;
@@ -63,7 +67,8 @@ import java.util.concurrent.TimeUnit;
  * through the topology.
  */
 public class TopologyManager implements IFloodlightModule, ITopologyService, 
-ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
+ITopologyManagerBackend, IMulticastListener, ILinkDiscoveryListener, 
+IOFMessageListener {
     private static Logger log = LoggerFactory.getLogger(TopologyManager.class);
     public static final String MODULE_NAME = "topology";
 
@@ -111,8 +116,7 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
     protected static IRestApiService restApiService;
     protected static IDebugCounterService debugCounterService;
     protected static IStatisticsService statisticsService;
-    
-    
+    protected static IMulticastService multicastService;
 
     // Modules that listen to our updates
     protected ArrayList<ITopologyListener> topologyAware;
@@ -591,6 +595,7 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
         l.add(IOFSwitchService.class);
         l.add(IDebugCounterService.class);
         l.add(IRestApiService.class);
+        l.add(IMulticastService.class);
         return l;
     }
 
@@ -604,6 +609,7 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
         restApiService = context.getServiceImpl(IRestApiService.class);
         debugCounterService = context.getServiceImpl(IDebugCounterService.class);
         statisticsService = context.getServiceImpl(IStatisticsService.class);
+        multicastService = context.getServiceImpl(IMulticastService.class);
 
         switchPorts = new HashMap<DatapathId, Set<OFPort>>();
         switchPortLinks = new HashMap<NodePortTuple, Set<Link>>();
@@ -670,6 +676,7 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
         }
 
         linkDiscoveryService.addListener(this);
+        multicastService.addListener(this);
         floodlightProviderService.addOFMessageListener(OFType.PACKET_IN, this);
         floodlightProviderService.addHAListener(this.haListener);
         addRestletRoutable();
@@ -1017,6 +1024,8 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
 
         nt.compute();
 
+        computeMulticastPaths(nt);
+
         currentInstance = nt;
 
         return true;
@@ -1349,4 +1358,54 @@ ITopologyManagerBackend, ILinkDiscoveryListener, IOFMessageListener {
         /* cannot invoke scheduled executor, since the update might not occur */
         return updateTopology("forced-recomputation", true);
     }
+
+    /**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Multicast Participant Methods to update MulticastGroups and MulticastPaths
+     * 
+     */
+
+    private void computeMulticastPaths(TopologyInstance ti) {
+		for (IPAddress<?> groupAddress: 
+			TopologyManager.multicastService.getAllParticipantGroupAddresses()) {
+			Set<MacVlanPair> intfSet = 
+					TopologyManager.multicastService.getParticipantIntfs(groupAddress);
+			for (MacVlanPair intf: intfSet) {
+				Set<NodePortTuple> attachmentPoints = 
+						TopologyManager.multicastService.getParticipantAP(groupAddress, intf);
+				for (NodePortTuple ap: attachmentPoints) {
+					DatapathId swId = ap.getNodeId();
+					DatapathId archId = ti.getArchipelagoId(swId);
+					MulticastGroupId mgId = new MulticastGroupId(groupAddress, archId);
+					ti.addParticipant(mgId, intf, ap, false);
+				}
+			}
+		}
+		ti.computeMulticastPaths(null);
+    }
+
+	@Override
+	public void ParticipantAdded(IPAddress<?> groupAddress, MacVlanPair intf, NodePortTuple ap) {
+		DatapathId swId = ap.getNodeId();
+		TopologyInstance ti = getCurrentInstance();
+		DatapathId archId = ti.getArchipelagoId(swId);
+		MulticastGroupId mgId = new MulticastGroupId(groupAddress, archId);
+		ti.addParticipant(mgId, intf, ap, true);
+	}
+
+	@Override
+	public void ParticipantRemoved(IPAddress<?> groupAddress, MacVlanPair intf, NodePortTuple ap) {
+		DatapathId swId = ap.getNodeId();
+		TopologyInstance ti = getCurrentInstance();
+		DatapathId archId = ti.getArchipelagoId(swId);
+		MulticastGroupId mgId = new MulticastGroupId(groupAddress, archId);
+		ti.removeParticipant(mgId, intf, ap);
+	}
+	
+	@Override
+	public void ParticipantsReset() {
+		TopologyInstance ti = getCurrentInstance();
+		ti.clearParticipants();
+	}
 }
