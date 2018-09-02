@@ -17,12 +17,7 @@
 
 package net.floodlightcontroller.routing;
 
-import java.util.Collection;
 import java.util.List;
-import java.util.Optional;
-
-import net.floodlightcontroller.core.IOFSwitch;
-import net.floodlightcontroller.core.types.NodePortTuple;
 import org.projectfloodlight.openflow.types.*;
 
 import net.floodlightcontroller.core.module.IFloodlightService;
@@ -211,4 +206,17 @@ public interface IRoutingService extends IFloodlightService {
      * @return true upon success; false otherwise
      */
     boolean forceRecompute();
+
+	/**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Retrieves end-to-end path b/w srcSwId
+     * at srcwPort and mgId
+     * 
+     * @param srcSwId
+     * @param groupAddress
+     * 
+     * @return MulticastPath
+     */
+    MulticastPath getMulticastPath(DatapathId srcSwId, IPAddress<?> groupAddress);
 }
