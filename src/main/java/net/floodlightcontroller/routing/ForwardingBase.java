@@ -108,6 +108,7 @@ public abstract class ForwardingBase implements IOFMessageListener {
 
     protected void startUp() {
         floodlightProviderService.addOFMessageListener(OFType.PACKET_IN, this);
+        floodlightProviderService.addOFMessageListener(OFType.FLOW_REMOVED, this);
     }
 
     @Override
@@ -129,6 +130,18 @@ public abstract class ForwardingBase implements IOFMessageListener {
     public abstract Command processPacketInMessage(IOFSwitch sw, OFPacketIn pi, 
             IRoutingDecision decision, FloodlightContext cntx);
 
+    /**
+     * All subclasses must define this function if they want any specific
+     * action when a flow is removed
+     *
+     * @param sw
+     *            Switch that the packet came in from
+     * @param fr
+     *            The packet that came in
+     */
+    public abstract Command processFlowRemovedMessage(IOFSwitch sw, OFFlowRemoved fr, 
+            FloodlightContext cntx);
+
     @Override
     public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
         Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
@@ -140,6 +153,8 @@ public abstract class ForwardingBase implements IOFMessageListener {
                 decision = RoutingDecision.rtStore.get(cntx, IRoutingDecision.CONTEXT_DECISION);
             }
             return this.processPacketInMessage(sw, (OFPacketIn) msg, decision, cntx);
+        case FLOW_REMOVED:
+            return this.processFlowRemovedMessage(sw, (OFFlowRemoved) msg, cntx);
         default:
             break;
         }

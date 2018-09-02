@@ -2,8 +2,6 @@ package net.floodlightcontroller.routing;
 
 import java.util.*;
 
-import net.floodlightcontroller.core.IOFSwitch;
-import net.floodlightcontroller.core.types.NodePortTuple;
 import org.projectfloodlight.openflow.types.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,6 +15,8 @@ import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
 import net.floodlightcontroller.topology.ITopologyManagerBackend;
 import net.floodlightcontroller.topology.ITopologyService;
+import net.floodlightcontroller.topology.MulticastGroupId;
+import net.floodlightcontroller.topology.TopologyInstance;
 
 /**
  * Separate path-finding and routing functionality from the 
@@ -175,4 +175,12 @@ public class RoutingManager implements IFloodlightModule, IRoutingService {
     public boolean isL3RoutingEnabled() {
         return enableL3RoutingService;
     }
+
+	@Override
+	public MulticastPath getMulticastPath(DatapathId srcSwId, IPAddress<?> groupAddress) {
+		TopologyInstance ti = tm.getCurrentTopologyInstance();
+		DatapathId archId = ti.getArchipelagoId(srcSwId);
+		MulticastGroupId mgId = new MulticastGroupId(groupAddress, archId);
+		return ti.getMulticastPath(srcSwId, mgId);
+	}
 }

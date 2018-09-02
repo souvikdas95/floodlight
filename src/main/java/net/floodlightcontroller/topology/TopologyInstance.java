@@ -18,13 +18,17 @@ package net.floodlightcontroller.topology;
 
 import com.google.common.collect.ImmutableSet;
 import net.floodlightcontroller.core.IOFSwitch;
+import net.floodlightcontroller.core.types.MacVlanPair;
 import net.floodlightcontroller.core.types.NodePortTuple;
 import net.floodlightcontroller.linkdiscovery.Link;
 import net.floodlightcontroller.routing.BroadcastTree;
+import net.floodlightcontroller.routing.MulticastPath;
+import net.floodlightcontroller.routing.MulticastPathId;
 import net.floodlightcontroller.routing.Path;
 import net.floodlightcontroller.routing.PathId;
 import net.floodlightcontroller.statistics.SwitchPortBandwidth;
 import net.floodlightcontroller.util.ClusterDFS;
+
 import org.projectfloodlight.openflow.protocol.OFPortDesc;
 import org.projectfloodlight.openflow.types.DatapathId;
 import org.projectfloodlight.openflow.types.OFPort;
@@ -35,6 +39,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -76,10 +81,14 @@ public class TopologyInstance {
     private Map<DatapathId, Cluster>            clusterFromSwitch; /* cluster for each switch */
 
     /* Per-archipelago */
-    private List<Archipelago>                   archipelagos; /* connected clusters */
+    private Set<Archipelago>                    archipelagos; /* connected clusters */
     private Map<Cluster, Archipelago>           archipelagoFromCluster;
     private Map<DatapathId, Set<NodePortTuple>> portsBroadcastPerArchipelago; /* broadcast ports in each archipelago ID */
     private Map<PathId, List<Path>>             pathcache; /* contains computed paths ordered best to worst */
+
+    /* For Multicasting */
+    private Map<MulticastPathId, MulticastPath>	  pathcacheMF; /* contains computed best multicast path */
+    private Map<MulticastGroupId, MulticastGroup> multicastGroups; /* contains multicast groups */
 
     protected TopologyInstance(Map<DatapathId, Set<OFPort>> portsWithLinks,
             Set<NodePortTuple> portsBlocked,
@@ -118,7 +127,7 @@ public class TopologyInstance {
         }
 
         this.linksNonExternalInterCluster = new HashSet<Link>();
-        this.archipelagos = new ArrayList<Archipelago>();
+        this.archipelagos = new HashSet<Archipelago>();
 
         this.portsWithMoreThanTwoLinks = new HashSet<NodePortTuple>(portsWithMoreThanTwoLinks);
         this.portsTunnel = new HashSet<NodePortTuple>(portsTunnel);
@@ -135,6 +144,9 @@ public class TopologyInstance {
         this.portsBroadcastPerArchipelago = new HashMap<DatapathId, Set<NodePortTuple>>();
 
         this.archipelagoFromCluster = new HashMap<Cluster, Archipelago>();
+
+        this.pathcacheMF = new ConcurrentHashMap<MulticastPathId, MulticastPath>();
+        this.multicastGroups = new ConcurrentHashMap<MulticastGroupId, MulticastGroup>();
     }
 
     protected void compute() {
@@ -512,8 +524,12 @@ public class TopologyInstance {
         /* Base case of 1:1 mapping b/t clusters and archipelagos */
         if (links.isEmpty()) {
             if (!clusters.isEmpty()) {
-                clusters.forEach(c -> archipelagos.add(new Archipelago().add(c)));
-            }
+            	for (Cluster c: clusters) {
+            		Archipelago a = new Archipelago().add(c);
+            		archipelagos.add(a);
+            		archipelagoFromCluster.put(c, a);
+        		}
+        	}
         } else { /* Only for two or more adjacent clusters that form archipelagos */
             for (Link l : links) {
                 for (Cluster c : clusters) {
@@ -529,7 +545,9 @@ public class TopologyInstance {
 
                 // Are they both found in an archipelago? If so, then merge the two.
                 if (srcArchipelago != null && dstArchipelago != null && !srcArchipelago.equals(dstArchipelago)) {
+                	archipelagos.remove(srcArchipelago);
                     srcArchipelago.merge(dstArchipelago);
+                    archipelagos.add(srcArchipelago);
                     archipelagos.remove(dstArchipelago);
                     archipelagoFromCluster.put(dstCluster, srcArchipelago);
                 }
@@ -544,12 +562,16 @@ public class TopologyInstance {
 
                 // If only one is found in an existing, then add the one not found to the existing.
                 else if (srcArchipelago != null && dstArchipelago == null) {
+                	archipelagos.remove(srcArchipelago);
                     srcArchipelago.add(dstCluster);
+                    archipelagos.add(srcArchipelago);
                     archipelagoFromCluster.put(dstCluster, srcArchipelago);
                 }
 
                 else if (srcArchipelago == null && dstArchipelago != null) {
+                	archipelagos.remove(dstArchipelago);
                     dstArchipelago.add(srcCluster);
+                    archipelagos.add(dstArchipelago);
                     archipelagoFromCluster.put(srcCluster, dstArchipelago);
                 }
 
@@ -788,7 +810,7 @@ public class TopologyInstance {
                 for (DatapathId dst : dstSws) {
                     log.debug("Calling Yens {} {}", src, dst);
                     paths = yens(src, dst, TopologyManager.getMaxPathsToComputeInternal(),
-                            getArchipelago(src), getArchipelago(dst));
+                            a, a);
                     pathId = new PathId(src, dst);
                     pathcache.put(pathId, paths);
                     log.debug("Adding paths {}", paths);
@@ -845,7 +867,7 @@ public class TopologyInstance {
     public boolean pathExists(DatapathId srcId, DatapathId dstId) {
         Archipelago srcA = getArchipelago(srcId);
         Archipelago dstA = getArchipelago(dstId);
-        if (!srcA.getId().equals(dstA.getId())) {
+        if (srcA == null || dstA == null || !srcA.equals(dstA)) {
             return false;
         }
 
@@ -938,17 +960,21 @@ public class TopologyInstance {
         }
     }
 
+    /*
+     * In this, the parameter 'd' can be a switchId, or clusterId or archipelagoId
+     * as each of them represents a switch in the archipelago it belongs to.
+     */
     private Archipelago getArchipelago(DatapathId d) {
-        for (Archipelago a : archipelagos) {
-            if (a.getSwitches().contains(d)) {
-                return a;
-            }
+        Cluster c = clusterFromSwitch.get(d);
+        if (c != null) {
+        	return archipelagoFromCluster.get(c);
         }
         return null;
     }
 
-    public void setPathCosts(Path p) {
-        U64 cost = U64.ZERO;
+    public void setPathCosts(Path p, Map<Link, Integer> linkCost) {
+        U64 latency = U64.ZERO;
+        Integer cost = 0;
 
         // Set number of hops. Assuming the list of NPTs is always even.
         p.setHopCount(p.getPath().size()/2);
@@ -962,12 +988,22 @@ public class TopologyInstance {
                 if (l.getSrc().equals(src) && l.getDst().equals(dst) &&
                         l.getSrcPort().equals(srcPort) && l.getDstPort().equals(dstPort)) {
                     log.debug("Matching link found: {}", l);
-                    cost = cost.add(l.getLatency());
+                    // Add Latency
+                    U64 _latency = l.getLatency();
+                    latency = latency.add(_latency);
+                    
+                    // Add Cost
+                    Integer _cost = (linkCost == null) ? null : linkCost.get(l);
+                    if (_cost == null) {
+                    	_cost = 1;
+                    }
+                    cost += _cost;
                 }
             }
         }
 
-        p.setLatency(cost);
+        p.setLatency(latency);
+        p.setCost(cost);
         log.debug("Total cost is {}", cost);
         log.debug(p.toString());
 
@@ -1016,7 +1052,7 @@ public class TopologyInstance {
         Path newroute = buildPath(new PathId(src, dst), bt); /* guaranteed to be in same tree */
 
         if (newroute != null && !newroute.getPath().isEmpty()) { /* should never be null, but might be empty */
-            setPathCosts(newroute);
+            setPathCosts(newroute, linkCost);
             A.add(newroute);
             log.debug("Found shortest path in Yens {}", newroute);
         }
@@ -1076,7 +1112,7 @@ public class TopologyInstance {
                 totalNpt.addAll(rootPath.getPath());
                 totalNpt.addAll(spurPath.getPath());
                 Path totalPath = new Path(new PathId(src, dst), totalNpt);
-                setPathCosts(totalPath);
+                setPathCosts(totalPath, linkCost);
 
                 log.trace("Spur Node: {}", spurNode);
                 log.trace("Root Path: {}", rootPath);
@@ -1265,9 +1301,9 @@ public class TopologyInstance {
     }
 
     public DatapathId getArchipelagoId(DatapathId switchId) {
-        Cluster c = clusterFromSwitch.get(switchId);
-        if (c != null) {
-            return archipelagoFromCluster.get(c).getId();
+        Archipelago a = getArchipelago(switchId);
+        if (a != null) {
+            return a.getId();
         }
         return switchId;
     }
@@ -1313,10 +1349,13 @@ public class TopologyInstance {
     }
 
     public boolean isInSameArchipelago(DatapathId s1, DatapathId s2) {
-        for (Archipelago a : archipelagos) {
-            if (a.getSwitches().contains(s1) && a.getSwitches().contains(s2)) {
-                return true;
-            }
+    	if (s1.equals(s2)) {
+    		return true;
+    	}
+    	Archipelago a1 = getArchipelago(s1);
+    	Archipelago a2 = getArchipelago(s2);
+        if (a1 != null && a2 != null && a1.equals(a2)) {
+        	return true;
         }
         return false;
     }
@@ -1399,7 +1438,7 @@ public class TopologyInstance {
                 NodePortTuple npt = new NodePortTuple(sw, p);
                 if (isEdge(sw, p)) {
                     /* Add to per-archipelago NPT map */
-                    DatapathId aId = getArchipelago(sw).getId();
+                    DatapathId aId = getArchipelagoId(sw);
                     if (portsBroadcastPerArchipelago.containsKey(aId)) {
                         portsBroadcastPerArchipelago.get(aId).add(npt);
                     } else {
@@ -1429,4 +1468,305 @@ public class TopologyInstance {
     public Set<DatapathId> getArchipelagoIds() {
         return archipelagos.stream().map(Archipelago::getId).collect(Collectors.toSet());
     }
+
+    ///////////////////////////////////
+    // Multicasting Topology methods //
+    ///////////////////////////////////
+
+    /**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Computes multicast paths
+     * for a given collection of multicast groups
+     * 
+     * @param mgIds
+     * 
+     * @return
+     */
+    protected void computeMulticastPaths(Collection<MulticastGroupId> mgIds) {
+    	if (mgIds == null) {
+    		pathcacheMF.clear();
+    		mgIds = multicastGroups.keySet();
+    	}
+    	if (!mgIds.isEmpty()) {
+    		for (MulticastGroupId mgId: mgIds) {
+    			Archipelago a = getArchipelago(mgId.getArchipelagoId());
+    			if (a == null) {
+    				continue;
+    			}
+	    		for (DatapathId swId: a.getSwitches()) {
+					MulticastPathId mPathId = new MulticastPathId(swId, mgId);
+					MulticastPath mPath = computeMulticastPath(mPathId);
+					if (mPath != null) {
+						pathcacheMF.put(mPathId, mPath);
+					}
+	    		}
+	    	}
+    	}
+    }
+
+    /**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Computes multicast path for a given mPathId
+     * 
+     * @param mPathId
+     * 
+     * @return MulticastPath
+     */
+    private MulticastPath computeMulticastPath(MulticastPathId mPathId) {
+        DatapathId srcSwId = mPathId.getSrc();
+        MulticastGroupId mgId = mPathId.getMulticastGroupId();
+
+        /*
+         * Validate Requirements
+         */
+    	MulticastGroup mg = multicastGroups.get(mgId);
+    	if (mg == null) {
+    		if (log.isDebugEnabled()) {
+				log.debug(String.format("computeMulticastPath: srcSwId: {s%d}, mgId: {%s},"
+						+ "No suitable multicast group found, Exiting",
+						srcSwId.getLong(), mgId));
+    		}
+    		return null;
+    	}
+
+    	Set<DatapathId> swIds = mg.getSwitches();
+    	if (swIds.isEmpty()) {
+    		if (log.isDebugEnabled()) {
+				log.debug(String.format("computeMulticastPath: srcSwId: {s%d}, mgId: {%s},"
+						+ "Multicast group is not attached to any switch, Exiting",
+						srcSwId.getLong(), mgId));
+    		}
+    		return null;
+    	}
+
+    	/*
+    	 *  Create MulticastPath
+    	 */
+		MulticastPath result = new MulticastPath(srcSwId, mgId);
+
+		Set<DatapathId> unselectedSwIds = new HashSet<DatapathId>(swIds);
+		List<DatapathId> selectedSwIds = new ArrayList<DatapathId>();
+		Map<DatapathId, Path> shortestPathSoFarMap = new HashMap<DatapathId, Path>();
+		Path shortestPath = null;
+
+		// If unselectedSwIds contains the root, add an empty Path
+		// but with valid attachmentPoints to list of paths in result
+		if (unselectedSwIds.contains(srcSwId)) {
+			unselectedSwIds.remove(srcSwId);
+			Set<OFPort> edgePorts = mg.getApPorts(srcSwId);
+			result.add(srcSwId, edgePorts, 
+					new Path(new PathId(srcSwId, srcSwId), ImmutableList.of()));
+		}
+
+		// Add tree root to selectedSwIds
+		selectedSwIds.add(srcSwId);
+
+		do {
+			// Add sources into selelectedSwIds from shortestPath
+			// except path root as it is already taken into account
+			if (shortestPath != null) {
+				selectedSwIds = new ArrayList<DatapathId>();
+				List<NodePortTuple> nptList = shortestPath.getPath();
+				for (int index = 1; index < nptList.size(); index += 2) {
+					selectedSwIds.add(nptList.get(index).getNodeId());
+				}
+			}
+
+			// Update shortestPathSoFarMap for every destination in unselectedSwIds
+			for (DatapathId _dstSwId: unselectedSwIds) {
+				for (DatapathId _srcSwId: selectedSwIds) {
+					PathId pathId = new PathId(_srcSwId, _dstSwId);
+
+					// Get path (shortest) from _srcSwId to _dstSwId (O(1))
+					List<Path> paths = pathcache.get(pathId);
+					if (paths == null || paths.isEmpty()) {
+						continue;
+					}
+					Path path = paths.get(0);
+
+					// Get shortestPathSoFar for _dstSwId (O(1))
+					Path shortestPathSoFar = shortestPathSoFarMap.get(_dstSwId);
+
+					// Compare and update (O(1))
+					// Note: Ensure exclusive paths by using fallback to HopCount
+					if ((shortestPathSoFar == null) || /*first run*/
+							(path.getCost() < shortestPathSoFar.getCost()) ||
+								(path.getCost() == shortestPathSoFar.getCost() && 
+								path.getHopCount() < shortestPathSoFar.getHopCount())) {
+						shortestPathSoFarMap.put(_dstSwId, path);
+					}
+				}
+			}
+
+			// Exit if shortestPathSoFarMap is empty (after first run)
+			if (shortestPathSoFarMap.isEmpty()) {
+				break;
+			}
+
+			// Select shortestPath from shortestPathSoFarMap
+			shortestPath = null;
+			for (Path path: shortestPathSoFarMap.values()) {
+				if (shortestPath == null ||
+						path.getCost() < shortestPath.getCost()) {
+					shortestPath = path;
+				}
+			}
+
+			// Remove from unselectedSwIds & shortestPathSoFarMap
+			DatapathId dstSwId = shortestPath.getId().getDst();
+			unselectedSwIds.remove(dstSwId);
+			shortestPathSoFarMap.remove(dstSwId);
+
+			// Add to result
+			Set<OFPort> edgePorts = mg.getApPorts(dstSwId);
+			result.add(dstSwId, edgePorts, shortestPath);
+
+		} while (shortestPathSoFarMap.size() > 0);
+
+    	if (result.isEmpty())
+    	{
+    		if (log.isDebugEnabled()) {
+				log.debug(String.format("computeMulticastPath: srcSwId: {s%d}, mgId: {%s}, "
+						+ "No path could be formed, Exiting",
+						srcSwId.getLong(), mgId));
+	    	}
+	    	return null;
+    	}
+
+    	return result;
+	}
+
+    /**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Clear multicast paths
+     * for a given collection of multicast groups
+     * 
+     * Note: Each mg is unique in all archipelagos
+     * 
+     * @param mgIds
+     * 
+     * @return
+     */
+	protected void clearMulticastPaths(Collection<MulticastGroupId> mgIds) {
+    	if (mgIds != null && !mgIds.isEmpty()) {
+    		for (MulticastGroupId mgId: mgIds) {
+    			Archipelago a = getArchipelago(mgId.getArchipelagoId());
+    			if (a == null) {
+    				continue;
+    			}
+	    		for (DatapathId swId: a.getSwitches()) {
+					MulticastPathId mPathId = new MulticastPathId(swId, mgId);
+					pathcacheMF.remove(mPathId);
+	    		}
+	    	}
+    	}
+    }
+
+	/**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Retrieves Multicast path b/w srcSwId and mgId
+     * 
+     * @param srcSwId
+     * @param mgId
+     * 
+     * @return MulticastPath
+     */
+	public MulticastPath getMulticastPath(DatapathId srcSwId, MulticastGroupId mgId) {
+    	MulticastPathId mPathId = new MulticastPathId(srcSwId, mgId);
+    	MulticastPath mPath = pathcacheMF.get(mPathId);
+
+        return (mPath == null) ? new MulticastPath(mPathId) : mPath;
+    }
+
+    /**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Adds a participant to multicast group
+     * 
+     * @param mgId
+     * @param intf
+     * @param ap
+     * @param recomputePaths
+     * 
+     * @return
+     */
+    protected void addParticipant(MulticastGroupId mgId, MacVlanPair intf, NodePortTuple ap, 
+    		boolean recomputePaths) {
+		Set<MulticastGroupId> updated = new HashSet<MulticastGroupId>();
+		DatapathId swId = ap.getNodeId();
+		OFPort port = ap.getPortId();
+		if (!isEdge(swId, port)) {
+			return;
+		}
+		MulticastGroup mg = multicastGroups.get(mgId);
+		if (mg == null) {
+			mg = new MulticastGroup(mgId);
+			multicastGroups.put(mgId, mg);
+			mg.add(intf, ap);
+			updated.add(mgId);
+		}
+		else {
+			Set<NodePortTuple> storedAp = mg.getAttachmentPoints(intf);
+			if (storedAp == null || !storedAp.contains(ap)) {
+				mg.add(intf, ap);
+				updated.add(mgId);
+			}
+		}
+		if (recomputePaths) {
+			computeMulticastPaths(updated);
+		}
+	}
+
+    /**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Remove a participant from multicast group
+     * 
+     * @param mgId
+     * @param intf
+     * @param ap
+     * 
+     * @return
+     */
+	protected void removeParticipant(MulticastGroupId mgId, MacVlanPair intf, NodePortTuple ap) {
+		Set<MulticastGroupId> updated = new HashSet<MulticastGroupId>();
+		Set<MulticastGroupId> removed = new HashSet<MulticastGroupId>();
+		DatapathId swId = ap.getNodeId();
+		OFPort port = ap.getPortId();
+		if (!isEdge(swId, port)) {
+			return;
+		}
+		MulticastGroup mg = multicastGroups.get(mgId);
+		if (mg != null) {
+			Set<NodePortTuple> storedAp = mg.getAttachmentPoints(intf);
+			if (storedAp != null && storedAp.contains(ap)) {
+				mg.remove(intf, ap);
+				if (mg.isEmpty()) {
+					multicastGroups.remove(mgId);
+					removed.add(mgId);
+				}
+				else {
+					updated.add(mgId);
+				}
+			}
+		}
+		clearMulticastPaths(removed);
+		computeMulticastPaths(updated);
+	}
+
+    /**
+     * @author Souvik Das (souvikdas95@yahoo.co.in)
+     * 
+     * Removes all participants from all multicast groups
+     * 
+     * @return
+     */
+	protected void clearParticipants() {
+		multicastGroups.clear();
+		pathcacheMF.clear();
+	}
 } 
