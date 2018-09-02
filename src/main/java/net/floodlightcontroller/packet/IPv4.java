@@ -40,6 +40,7 @@ public class IPv4 extends BasePacket {
     static {
         protocolClassMap = new HashMap<IpProtocol, Class<? extends IPacket>>();
         protocolClassMap.put(IpProtocol.ICMP, ICMP.class);
+        protocolClassMap.put(IpProtocol.IGMP, IGMP.class);
         protocolClassMap.put(IpProtocol.TCP, TCP.class);
         protocolClassMap.put(IpProtocol.UDP, UDP.class);
     }
