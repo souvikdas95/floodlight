@@ -1,0 +1,1 @@
+bash setup-eclipse.sh %*
