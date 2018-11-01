@@ -1,18 +1,19 @@
 package net.floodlightcontroller.topology;
 
 import org.projectfloodlight.openflow.types.DatapathId;
-import org.projectfloodlight.openflow.types.IPAddress;
+
+import net.floodlightcontroller.multicasting.internal.ParticipantGroupAddress;
 
 public class MulticastGroupId {
-	private final IPAddress<?> groupAddress;
+	private final ParticipantGroupAddress groupAddress;
 	private final DatapathId archId;
 	
-	public MulticastGroupId(IPAddress<?> groupAddress, DatapathId archId) {
+	public MulticastGroupId(ParticipantGroupAddress groupAddress, DatapathId archId) {
 		this.groupAddress = groupAddress;
 		this.archId = archId;
 	}
 	
-	public IPAddress<?> getGroupAddress() {
+	public ParticipantGroupAddress getGroupAddress() {
 		return groupAddress;
 	}
 	

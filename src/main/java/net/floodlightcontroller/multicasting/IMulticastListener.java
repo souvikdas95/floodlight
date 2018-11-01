@@ -1,9 +1,8 @@
 package net.floodlightcontroller.multicasting;
 
-import org.projectfloodlight.openflow.types.IPAddress;
-
 import net.floodlightcontroller.core.types.MacVlanPair;
 import net.floodlightcontroller.core.types.NodePortTuple;
+import net.floodlightcontroller.multicasting.internal.ParticipantGroupAddress;
 
 /**
  * @author Souvik Das (souvikdas95@yahoo.co.in)
@@ -12,9 +11,9 @@ import net.floodlightcontroller.core.types.NodePortTuple;
  * 
  */ 
 public interface IMulticastListener {
-	void ParticipantAdded(IPAddress<?> group, MacVlanPair intf, NodePortTuple ap);
+	void ParticipantAdded(ParticipantGroupAddress group, MacVlanPair intf, NodePortTuple ap);
 	
-	void ParticipantRemoved(IPAddress<?> group, MacVlanPair intf, NodePortTuple ap);
+	void ParticipantRemoved(ParticipantGroupAddress group, MacVlanPair intf, NodePortTuple ap);
 	
 	void ParticipantsReset();
 }
