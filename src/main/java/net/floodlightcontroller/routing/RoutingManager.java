@@ -13,6 +13,7 @@ import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.multicasting.internal.ParticipantGroupAddress;
 import net.floodlightcontroller.topology.ITopologyManagerBackend;
 import net.floodlightcontroller.topology.ITopologyService;
 import net.floodlightcontroller.topology.MulticastGroupId;
@@ -177,7 +178,7 @@ public class RoutingManager implements IFloodlightModule, IRoutingService {
     }
 
 	@Override
-	public MulticastPath getMulticastPath(DatapathId srcSwId, IPAddress<?> groupAddress) {
+	public MulticastPath getMulticastPath(DatapathId srcSwId, ParticipantGroupAddress groupAddress) {
 		TopologyInstance ti = tm.getCurrentTopologyInstance();
 		DatapathId archId = ti.getArchipelagoId(srcSwId);
 		MulticastGroupId mgId = new MulticastGroupId(groupAddress, archId);

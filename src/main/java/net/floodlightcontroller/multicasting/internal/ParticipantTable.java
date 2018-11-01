@@ -6,6 +6,9 @@ import java.util.Set;
 import java.util.HashMap;
 
 import org.projectfloodlight.openflow.types.IPAddress;
+import org.projectfloodlight.openflow.types.MacAddress;
+import org.projectfloodlight.openflow.types.TransportPort;
+import org.projectfloodlight.openflow.types.VlanVid;
 import org.python.google.common.collect.ImmutableSet;
 
 import net.floodlightcontroller.core.types.MacVlanPair;
@@ -15,18 +18,21 @@ import net.floodlightcontroller.util.RWSync;
 /**
  * @author Souvik Das (souvikdas95@yahoo.co.in)
  * 
- * Participant table that maps b/w Multicast IP, Device Intf & AttachmentPoints
+ * Participant table that maps b/w participant group address, device interfaces
+ * and attachment points.
+ * 
+ * Also maps group address to options.
  * 
  */
 public class ParticipantTable {
-	private class Group {
-		private final IPAddress<?> groupAddress;
+	private class GroupIntf {
+		private final ParticipantGroupAddress groupAddress;
 		private final MacVlanPair intf;
-		protected Group(IPAddress<?> groupAddress, MacVlanPair intf) {
+		protected GroupIntf(ParticipantGroupAddress groupAddress, MacVlanPair intf) {
 			this.groupAddress = groupAddress;
 			this.intf = intf;
 		}
-		protected IPAddress<?> getGroupAddress() {
+		protected ParticipantGroupAddress getGroupAddress() {
 			return groupAddress;
 		}
 		protected MacVlanPair getIntf() {
@@ -40,7 +46,7 @@ public class ParticipantTable {
 	        if (o == null || getClass() != o.getClass()) {
 	        	return false;
 	        }
-	        Group that = (Group) o;
+	        GroupIntf that = (GroupIntf) o;
 	        if (groupAddress == null || that.groupAddress == null || 
 	        		!groupAddress.equals(that.groupAddress)) {
 	        	return false;
@@ -59,32 +65,40 @@ public class ParticipantTable {
 	    }
 	}
 	
-	private final Map<IPAddress<?>, Set<MacVlanPair>> groupAddressToIntfMap;
-	private final Map<MacVlanPair, Set<IPAddress<?>>> intfToGroupAddressMap;
+	private final Map<ParticipantGroupAddress, Set<MacVlanPair>> groupAddressToIntfMap;
+	private final Map<MacVlanPair, Set<ParticipantGroupAddress>> intfToGroupAddressMap;
+
+	private final Map<GroupIntf, Set<NodePortTuple>> groupIntfToApMap;
 	
-	private final Map<Group, Set<NodePortTuple>> groupToApMap;
-	
+	// Options
+	private final Map<ParticipantGroupAddress, 
+		ParticipantGroupOptions> groupAddressToPgOptsMap;
+
 	// Reader-Writer Synchronization Class & Object
 	private final RWSync rwSync;
-	
+
 	public ParticipantTable() {
-		groupAddressToIntfMap = new HashMap<IPAddress<?>, Set<MacVlanPair>>();
-		intfToGroupAddressMap = new HashMap<MacVlanPair, Set<IPAddress<?>>>();
+		groupAddressToIntfMap = new HashMap<ParticipantGroupAddress, Set<MacVlanPair>>();
+		intfToGroupAddressMap = new HashMap<MacVlanPair, Set<ParticipantGroupAddress>>();
 		
-		groupToApMap = new HashMap<Group, Set<NodePortTuple>>();
+		groupIntfToApMap = new HashMap<GroupIntf, Set<NodePortTuple>>();
+		
+		groupAddressToPgOptsMap = new HashMap<ParticipantGroupAddress, 
+				ParticipantGroupOptions>();
 		
 		rwSync = new RWSync();
 	}
 	
-	public void add(IPAddress<?> groupAddress, MacVlanPair intf, NodePortTuple ap) {
+	public void add(ParticipantGroupAddress groupAddress, MacVlanPair intf, 
+			NodePortTuple ap) {
 		if (groupAddress == null || intf == null || ap == null) {
 			return;
 		}
 		
 		Set<MacVlanPair> intfSet;
-		Set<IPAddress<?>> groupAddressSet;
+		Set<ParticipantGroupAddress> groupAddressSet;
 		Set<NodePortTuple> apSet;
-		Group group = new Group(groupAddress, intf);
+		GroupIntf groupIntf = new GroupIntf(groupAddress, intf);
 
 		rwSync.writeLock();
 		
@@ -97,47 +111,54 @@ public class ParticipantTable {
 		
 		groupAddressSet = intfToGroupAddressMap.get(intf);
 		if (groupAddressSet == null) {
-			groupAddressSet = new HashSet<IPAddress<?>>();
+			groupAddressSet = new HashSet<ParticipantGroupAddress>();
 			intfToGroupAddressMap.put(intf, groupAddressSet);
 		}
 		groupAddressSet.add(groupAddress);
 		
-		apSet = groupToApMap.get(group);
+		apSet = groupIntfToApMap.get(groupIntf);
 		if (apSet == null) {
 			apSet = new HashSet<NodePortTuple>();
-			groupToApMap.put(group, apSet);
+			groupIntfToApMap.put(groupIntf, apSet);
 		}
 		apSet.add(ap);
 		
 		rwSync.writeUnlock();
 	}
 	
-	public void remove(IPAddress<?> groupAddress, MacVlanPair intf, NodePortTuple ap) {
+	public void remove(ParticipantGroupAddress groupAddress, MacVlanPair intf, 
+			NodePortTuple ap) {
 		if (groupAddress == null || intf == null || ap == null) {
 			return;
 		}
 		
 		Set<MacVlanPair> intfSet;
-		Set<IPAddress<?>> groupAddressSet;
+		Set<ParticipantGroupAddress> groupAddressSet;
 		Set<NodePortTuple> apSet;
-		Group group = new Group(groupAddress, intf);
+		GroupIntf groupIntf = new GroupIntf(groupAddress, intf);
 
 		rwSync.writeLock();
 		
-		apSet = groupToApMap.get(group);
+		apSet = groupIntfToApMap.get(groupIntf);
 		if (apSet != null) {
 			apSet.remove(ap);
 			if (apSet.isEmpty()) {
-				groupToApMap.remove(group);
-
+				groupIntfToApMap.remove(groupIntf);
+				
+				groupAddress = groupIntf.getGroupAddress();
+				intf = groupIntf.getIntf();
+				
 				intfSet = groupAddressToIntfMap.get(groupAddress);
 				if (intfSet != null) {
 					intfSet.remove(intf);
 					if (intfSet.isEmpty()) {
 						groupAddressToIntfMap.remove(groupAddress);
+						
+						// Also remove options
+						groupAddressToPgOptsMap.remove(groupAddress);
 					}
 				}
-
+				
 				groupAddressSet = intfToGroupAddressMap.get(intf);
 				if (groupAddressSet != null) {
 					groupAddressSet.remove(groupAddress);
@@ -151,38 +172,40 @@ public class ParticipantTable {
 		rwSync.writeUnlock();
 	}
 	
-	public Boolean contains(IPAddress<?> groupAddress, MacVlanPair intf) {
+	public Boolean contains(ParticipantGroupAddress groupAddress, MacVlanPair intf) {
 		if (groupAddress == null || intf == null) {
 			return false;
 		}
 		
 		Boolean result;
-		Group group = new Group(groupAddress, intf);
+		GroupIntf groupIntf = new GroupIntf(groupAddress, intf);
 		
 		rwSync.readLock();
 		
-		result = groupToApMap.containsKey(group);
+		result = groupIntfToApMap.containsKey(groupIntf);
 		
 		rwSync.readUnlock();
 
 		return result;
 	}
 	
-	public Set<NodePortTuple> getAttachmentPoints(IPAddress<?> groupAddress, MacVlanPair intf) {
+	public Set<NodePortTuple> getAttachmentPoints(
+			ParticipantGroupAddress groupAddress, MacVlanPair intf) {
 		Set<NodePortTuple> result;
-		Group group = new Group(groupAddress, intf);
+		GroupIntf groupIntf = new GroupIntf(groupAddress, intf);
 		
 		rwSync.readLock();
 		
-		result = groupToApMap.get(group);
-		result = (result == null) ? ImmutableSet.of() : new HashSet<NodePortTuple>(result);
+		result = groupIntfToApMap.get(groupIntf);
+		result = (result == null) ? ImmutableSet.of() : 
+			new HashSet<NodePortTuple>(result);
 		
 		rwSync.readUnlock();
 		
 		return result;
 	}
 	
-	public Set<MacVlanPair> getIntfs(IPAddress<?> groupAddress) {
+	public Set<MacVlanPair> getIntfs(ParticipantGroupAddress groupAddress) {
 		if (groupAddress == null) {
 			return ImmutableSet.of();
 		}
@@ -192,24 +215,26 @@ public class ParticipantTable {
 		rwSync.readLock();
 		
 		result = groupAddressToIntfMap.get(groupAddress);
-		result = (result == null) ? ImmutableSet.of() : new HashSet<MacVlanPair>(result);
+		result = (result == null) ? ImmutableSet.of() : 
+			new HashSet<MacVlanPair>(result);
 		
 		rwSync.readUnlock();
 		
 		return result;
 	}
 	
-	public Set<IPAddress<?>> getGroupAddresses(MacVlanPair intf) {
+	public Set<ParticipantGroupAddress> getGroupAddresses(MacVlanPair intf) {
 		if (intf == null) {
 			return ImmutableSet.of();
 		}
 		
-		Set<IPAddress<?>> result;
+		Set<ParticipantGroupAddress> result;
 		
 		rwSync.readLock();
 		
 		result = intfToGroupAddressMap.get(intf);
-		result = (result == null) ? ImmutableSet.of() : new HashSet<IPAddress<?>>(result);
+		result = (result == null) ? ImmutableSet.of() : 
+			new HashSet<ParticipantGroupAddress>(result);
 		
 		rwSync.readUnlock();
 		
@@ -228,12 +253,13 @@ public class ParticipantTable {
 		return result;
 	}
 	
-	public Set<IPAddress<?>> getAllGroupAddresses() {
-		Set<IPAddress<?>> result;
+	public Set<ParticipantGroupAddress> getAllGroupAddresses() {
+		Set<ParticipantGroupAddress> result;
 		
 		rwSync.readLock();
 		
-		result = new HashSet<IPAddress<?>>(groupAddressToIntfMap.keySet());
+		result = new HashSet<ParticipantGroupAddress>(
+				groupAddressToIntfMap.keySet());
 		
 		rwSync.readUnlock();
 		
@@ -256,7 +282,7 @@ public class ParticipantTable {
 		return result;
 	}
 	
-	public Boolean hasGroupAddress(IPAddress<?> groupAddress) {
+	public Boolean hasGroupAddress(ParticipantGroupAddress groupAddress) {
 		if (groupAddress == null) {
 			return false;
 		}
@@ -272,7 +298,7 @@ public class ParticipantTable {
 		return result;
 	}
 	
-	public void deleteGroupAddress(IPAddress<?> groupAddress) {
+	public void deleteGroupAddress(ParticipantGroupAddress groupAddress) {
 		if (groupAddress == null) {
 			return;
 		}
@@ -291,8 +317,8 @@ public class ParticipantTable {
 			return;
 		}
 		
-		Set<IPAddress<?>> groupAddressSet = getGroupAddresses(intf);
-		for (IPAddress<?> groupAddress: groupAddressSet) {
+		Set<ParticipantGroupAddress> groupAddressSet = getGroupAddresses(intf);
+		for (ParticipantGroupAddress groupAddress: groupAddressSet) {
 			Set<NodePortTuple> apSet = getAttachmentPoints(groupAddress, intf);
 			for (NodePortTuple ap: apSet) {
 				remove(groupAddress, intf, ap);
@@ -305,8 +331,151 @@ public class ParticipantTable {
 		
 		groupAddressToIntfMap.clear();
 		intfToGroupAddressMap.clear();
-		groupToApMap.clear();
+		
+		groupIntfToApMap.clear();
+		
+		groupAddressToPgOptsMap.clear();
 		
 		rwSync.writeUnlock();
+	}
+	
+	public ParticipantGroupOptions getParticipantGroupOptions(
+			ParticipantGroupAddress groupAddress) {
+		if (groupAddress == null) {
+			return null;
+		}
+		
+		ParticipantGroupOptions result;
+		
+		rwSync.readLock();
+		
+		result = groupAddressToPgOptsMap.get(groupAddress);
+		
+		rwSync.readUnlock();
+		
+		return result;
+	}
+	
+	public void setParticipantGroupOptions(ParticipantGroupAddress groupAddress, 
+			ParticipantGroupOptions pgOpts) {
+		if (groupAddress == null) {
+			return;
+		}
+		
+		rwSync.writeLock();
+		
+		if (pgOpts == null) {
+			groupAddressToPgOptsMap.remove(groupAddress);
+		}
+		else {
+			groupAddressToPgOptsMap.put(groupAddress, pgOpts);
+		}
+		
+		rwSync.writeUnlock();
+	}
+	
+	public ParticipantGroupAddress queryParticipantGroupAddress(MacAddress macAddress, 
+			VlanVid vlanVid, IPAddress<?> ipAddress, TransportPort port) {
+		if (macAddress == null || vlanVid == null || ipAddress == null || port == null) {
+			return null;
+		}
+		
+		ParticipantGroupAddress result;
+		
+		rwSync.readLock();
+		
+		// CASE 1
+		result = new ParticipantGroupAddress(macAddress, vlanVid, ipAddress, port);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 2
+		result = new ParticipantGroupAddress(macAddress, vlanVid, ipAddress, null);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 3
+		result = new ParticipantGroupAddress(macAddress, vlanVid, null, port);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 4
+		result = new ParticipantGroupAddress(macAddress, null, ipAddress, port);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 5
+		result = new ParticipantGroupAddress(null, vlanVid, ipAddress, port);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 6
+		result = new ParticipantGroupAddress(macAddress, vlanVid, null, null);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 7
+		result = new ParticipantGroupAddress(macAddress, null, ipAddress, null);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 8
+		result = new ParticipantGroupAddress(macAddress, null, null, port);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 9
+		result = new ParticipantGroupAddress(null, vlanVid, ipAddress, null);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 10
+		result = new ParticipantGroupAddress(null, vlanVid, null, port);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 11
+		result = new ParticipantGroupAddress(null, null, ipAddress, port);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 12
+		result = new ParticipantGroupAddress(macAddress, null, null, null);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 13
+		result = new ParticipantGroupAddress(null, vlanVid, null, null);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 14
+		result = new ParticipantGroupAddress(null, null, ipAddress, null);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		// CASE 15
+		result = new ParticipantGroupAddress(null, null, null, port);
+		if (groupAddressToIntfMap.containsKey(result)) {
+			return result;
+		}
+		
+		rwSync.readUnlock();
+		
+		return null;
 	}
 }

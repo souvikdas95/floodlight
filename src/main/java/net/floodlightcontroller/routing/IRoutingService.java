@@ -21,6 +21,7 @@ import java.util.List;
 import org.projectfloodlight.openflow.types.*;
 
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.multicasting.internal.ParticipantGroupAddress;
 
 public interface IRoutingService extends IFloodlightService {
 
@@ -218,5 +219,5 @@ public interface IRoutingService extends IFloodlightService {
      * 
      * @return MulticastPath
      */
-    MulticastPath getMulticastPath(DatapathId srcSwId, IPAddress<?> groupAddress);
+    MulticastPath getMulticastPath(DatapathId srcSwId, ParticipantGroupAddress groupAddress);
 }

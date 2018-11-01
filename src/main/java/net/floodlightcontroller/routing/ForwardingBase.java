@@ -30,6 +30,7 @@ import net.floodlightcontroller.debugcounter.IDebugCounterService;
 import net.floodlightcontroller.devicemanager.IDeviceService;
 import net.floodlightcontroller.devicemanager.SwitchPort;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
+import net.floodlightcontroller.multicasting.IMulticastService;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.IPacket;
 import net.floodlightcontroller.restserver.IRestApiService;
@@ -88,6 +89,7 @@ public abstract class ForwardingBase implements IOFMessageListener {
     protected IDebugCounterService debugCounterService;
     protected ILinkDiscoveryService linkService;
     protected IRestApiService restApiService;
+    protected IMulticastService multicastService;
 
     // flow-mod - for use in the cookie
     public static final int FORWARDING_APP_ID = 2;

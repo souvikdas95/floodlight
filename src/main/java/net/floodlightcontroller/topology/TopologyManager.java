@@ -32,6 +32,7 @@ import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
 import net.floodlightcontroller.linkdiscovery.Link;
 import net.floodlightcontroller.multicasting.IMulticastListener;
 import net.floodlightcontroller.multicasting.IMulticastService;
+import net.floodlightcontroller.multicasting.internal.ParticipantGroupAddress;
 import net.floodlightcontroller.packet.BSN;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.LLDP;
@@ -46,7 +47,6 @@ import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.types.DatapathId;
-import org.projectfloodlight.openflow.types.IPAddress;
 import org.projectfloodlight.openflow.types.OFBufferId;
 import org.projectfloodlight.openflow.types.OFPort;
 import org.projectfloodlight.openflow.types.U64;
@@ -1366,8 +1366,8 @@ IOFMessageListener {
      */
 
     private void computeMulticastPaths(TopologyInstance ti) {
-		for (IPAddress<?> groupAddress: 
-			TopologyManager.multicastService.getAllParticipantGroupAddresses()) {
+		for (ParticipantGroupAddress groupAddress: 
+			multicastService.getAllParticipantGroupAddresses()) {
 			Set<MacVlanPair> intfSet = 
 					TopologyManager.multicastService.getParticipantIntfs(groupAddress);
 			for (MacVlanPair intf: intfSet) {
@@ -1385,7 +1385,7 @@ IOFMessageListener {
     }
 
 	@Override
-	public void ParticipantAdded(IPAddress<?> groupAddress, MacVlanPair intf, NodePortTuple ap) {
+	public void ParticipantAdded(ParticipantGroupAddress groupAddress, MacVlanPair intf, NodePortTuple ap) {
 		DatapathId swId = ap.getNodeId();
 		TopologyInstance ti = getCurrentInstance();
 		DatapathId archId = ti.getArchipelagoId(swId);
@@ -1394,7 +1394,7 @@ IOFMessageListener {
 	}
 
 	@Override
-	public void ParticipantRemoved(IPAddress<?> groupAddress, MacVlanPair intf, NodePortTuple ap) {
+	public void ParticipantRemoved(ParticipantGroupAddress groupAddress, MacVlanPair intf, NodePortTuple ap) {
 		DatapathId swId = ap.getNodeId();
 		TopologyInstance ti = getCurrentInstance();
 		DatapathId archId = ti.getArchipelagoId(swId);

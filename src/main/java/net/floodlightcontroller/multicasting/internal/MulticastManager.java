@@ -10,6 +10,7 @@ import java.util.Set;
 import org.projectfloodlight.openflow.types.DatapathId;
 import org.projectfloodlight.openflow.types.IPAddress;
 import org.projectfloodlight.openflow.types.MacAddress;
+import org.projectfloodlight.openflow.types.TransportPort;
 import org.projectfloodlight.openflow.types.VlanVid;
 
 import net.floodlightcontroller.core.IFloodlightProviderService;
@@ -87,7 +88,7 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 	}
 	
 	@Override
-	public void addParticipant(IPAddress<?> groupAddress, MacVlanPair intf, NodePortTuple ap) {
+	public void addParticipant(ParticipantGroupAddress groupAddress, MacVlanPair intf, NodePortTuple ap) {
 		Set<NodePortTuple> attachmentPoints = participantTable.getAttachmentPoints(groupAddress, intf);
 		if (attachmentPoints.isEmpty() || !attachmentPoints.contains(ap)) {
 			participantTable.add(groupAddress, intf, ap);
@@ -99,7 +100,7 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 	}
 
 	@Override
-	public void removeParticipant(IPAddress<?> groupAddress, MacVlanPair intf, NodePortTuple ap) {
+	public void removeParticipant(ParticipantGroupAddress groupAddress, MacVlanPair intf, NodePortTuple ap) {
 		Set<NodePortTuple> attachmentPoints = participantTable.getAttachmentPoints(groupAddress, intf);
 		if (attachmentPoints.isEmpty() && attachmentPoints.contains(ap)) {
 			participantTable.remove(groupAddress, intf, ap);
@@ -111,22 +112,22 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 	}
 	
 	@Override
-	public boolean hasParticipant(IPAddress<?> groupAddress, MacVlanPair intf) {
+	public boolean hasParticipant(ParticipantGroupAddress groupAddress, MacVlanPair intf) {
 		return participantTable.contains(groupAddress, intf);
 	}
 	
 	@Override
-	public Set<NodePortTuple> getParticipantAP(IPAddress<?> groupAddress, MacVlanPair intf) {
+	public Set<NodePortTuple> getParticipantAP(ParticipantGroupAddress groupAddress, MacVlanPair intf) {
 		return participantTable.getAttachmentPoints(groupAddress, intf);
 	}
 	
 	@Override
-	public Set<MacVlanPair> getParticipantIntfs(IPAddress<?> groupAddress) {
+	public Set<MacVlanPair> getParticipantIntfs(ParticipantGroupAddress groupAddress) {
 		return participantTable.getIntfs(groupAddress);
 	}
 
 	@Override
-	public Set<IPAddress<?>> getParticipantGroupAddresses(MacVlanPair intf) {
+	public Set<ParticipantGroupAddress> getParticipantGroupAddresses(MacVlanPair intf) {
 		return participantTable.getGroupAddresses(intf);
 	}
 
@@ -136,7 +137,7 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 	}
 
 	@Override
-	public Set<IPAddress<?>> getAllParticipantGroupAddresses() {
+	public Set<ParticipantGroupAddress> getAllParticipantGroupAddresses() {
 		return participantTable.getAllGroupAddresses();
 	}
 
@@ -146,12 +147,12 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 	}
 
 	@Override
-	public boolean hasParticipantGroupAddress(IPAddress<?> groupAddress) {
+	public boolean hasParticipantGroupAddress(ParticipantGroupAddress groupAddress) {
 		return participantTable.hasGroupAddress(groupAddress);
 	}
 
 	@Override
-	public void deleteParticipantGroupAddress(IPAddress<?> groupAddress) {
+	public void deleteParticipantGroupAddress(ParticipantGroupAddress groupAddress) {
 		Set<MacVlanPair> intfSet = participantTable.getIntfs(groupAddress);
 		for (MacVlanPair intf: intfSet) {
 			Set<NodePortTuple> apSet = participantTable.getAttachmentPoints(groupAddress, intf);
@@ -163,8 +164,8 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 
 	@Override
 	public void deleteParticipantIntf(MacVlanPair intf) {
-		Set<IPAddress<?>> groupSet = participantTable.getGroupAddresses(intf);
-		for (IPAddress<?> group: groupSet) {
+		Set<ParticipantGroupAddress> groupSet = participantTable.getGroupAddresses(intf);
+		for (ParticipantGroupAddress group: groupSet) {
 			Set<NodePortTuple> apSet = participantTable.getAttachmentPoints(group, intf);
 			for (NodePortTuple ap: apSet) {
 				removeParticipant(group, intf, ap);
@@ -179,6 +180,25 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 		for (IMulticastListener multicastingListener: multicastListeners) {
 			multicastingListener.ParticipantsReset();
 		}
+	}
+	
+	@Override
+	public void setParticipantGroupOptions(ParticipantGroupAddress groupAddress, 
+			ParticipantGroupOptions pgOpts) {
+		participantTable.setParticipantGroupOptions(groupAddress, pgOpts);
+	}
+
+	@Override
+	public ParticipantGroupOptions getParticipantOptions(
+			ParticipantGroupAddress groupAddress) {
+		return participantTable.getParticipantGroupOptions(groupAddress);
+	}
+	
+	@Override
+	public ParticipantGroupAddress queryParticipantGroupAddress(MacAddress macAddress, 
+			VlanVid vlanVid, IPAddress<?> ipAddress, TransportPort port) {
+		return participantTable.queryParticipantGroupAddress(macAddress, vlanVid, 
+				ipAddress, port);
 	}
 	
 	@Override
@@ -217,8 +237,8 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 		VlanVid[] vlanIds = device.getVlanId();
 		for (VlanVid vlanId: vlanIds) {
 			MacVlanPair intf = new MacVlanPair(macAddress, vlanId);
-			Set<IPAddress<?>> groupSet = getParticipantGroupAddresses(intf);
-			for (IPAddress<?> group: groupSet) {
+			Set<ParticipantGroupAddress> groupSet = getParticipantGroupAddresses(intf);
+			for (ParticipantGroupAddress group: groupSet) {
 				Set<NodePortTuple> memberAP = getParticipantAP(group, intf);
 				for (NodePortTuple ap: memberAP) {
 					removeParticipant(group, intf, ap);
@@ -239,10 +259,10 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 		VlanVid[] vlanIds = device.getVlanId();
 		for (VlanVid vlanId: vlanIds) {
 			MacVlanPair intf = new MacVlanPair(macAddress, vlanId);
-			Set<IPAddress<?>> groupSet = getParticipantGroupAddresses(intf);
-			for (IPAddress<?> group: groupSet) {
+			Set<ParticipantGroupAddress> groupAddressSet = getParticipantGroupAddresses(intf);
+			for (ParticipantGroupAddress groupAddress: groupAddressSet) {
 				// Reference attachmentPoints
-				Set<NodePortTuple> memberAP = getParticipantAP(group, intf);
+				Set<NodePortTuple> memberAP = getParticipantAP(groupAddress, intf);
 
 				// Classify Reference attachmentPoints based on Archipelago
 				Map<DatapathId, NodePortTuple> bucket = 
@@ -258,8 +278,8 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 					NodePortTuple refAp = bucket.get(clusterId);
 					if (refAp != null) {
 						if (!ap.equals(refAp)) {
-							removeParticipant(group, intf, refAp);
-							addParticipant(group, intf, ap);
+							removeParticipant(groupAddress, intf, refAp);
+							addParticipant(groupAddress, intf, ap);
 						}
 						bucket.remove(clusterId);
 					}
@@ -267,7 +287,7 @@ public class MulticastManager implements IFloodlightModule, IMulticastService, I
 				
 				// Remove remaining attachmentPoints
 				for (NodePortTuple ap: bucket.values()) {
-					removeParticipant(group, intf, ap);
+					removeParticipant(groupAddress, intf, ap);
 				}
 			}
 		}
