@@ -194,7 +194,7 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IM
 					// Destination in Reply SAP is Participant
 					MacVlanPair participantIntf = new MacVlanPair(destMACAddress, vlanVid);
 					
-					// When the Reply SAP is at Participant's Attachment Point
+					// When the Reply SAP is processed 
 					IDevice dstDevice = IDeviceService.fcStore.get(cntx, IDeviceService.CONTEXT_DST_DEVICE);
 					NodePortTuple participantAp = null;
 					SwitchPort sp = dstDevice.getAttachmentPoints()[0];
@@ -210,12 +210,14 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IM
 					if (streamAddress == null || !streamAddress.isMulticast()) {
 						return Command.CONTINUE;
 					}
-					TransportPort streamPort = TransportPort.of(
+					TransportPort streamPort1 = TransportPort.of(
 							sessionDescription.getMediaDescriptions()[0].getMedia().getPort());
-					ParticipantGroupAddress pgAddress = new ParticipantGroupAddress(null, null, streamAddress, streamPort);
+					TransportPort streamPort2 = TransportPort.of(streamPort1.getPort() + 1); // TODO: Find why this is required?
+					ParticipantGroupAddress pgAddress1 = new ParticipantGroupAddress(null, null, streamAddress, streamPort1);
+					ParticipantGroupAddress pgAddress2 = new ParticipantGroupAddress(null, null, streamAddress, streamPort2);
 					
-					logger.info(String.format("(%s), %s, %s", pgAddress, participantIntf, participantAp));
-					multicastingService.addParticipant(pgAddress, participantIntf, participantAp);
+					logger.info(String.format("(%s), %s, %s", pgAddress1, participantIntf, participantAp));
+					multicastingService.addParticipant(pgAddress2, participantIntf, participantAp);
 				}
 				catch (Exception ex) {
 					return Command.CONTINUE;
