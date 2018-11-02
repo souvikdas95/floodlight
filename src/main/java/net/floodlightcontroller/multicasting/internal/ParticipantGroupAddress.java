@@ -115,7 +115,7 @@ public class ParticipantGroupAddress {
         }
         
         if (vlanVid != null) {
-        	sb.append("MacAddress: " + vlanVid + ", ");
+        	sb.append("vlanVid: " + vlanVid + ", ");
         }
     	
         if (ipAddress != null) {
