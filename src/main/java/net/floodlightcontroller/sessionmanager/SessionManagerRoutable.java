@@ -14,6 +14,7 @@ public class SessionManagerRoutable implements RestletRoutable
 		Router router = new Router(context);
         router.attach("/reset", SessionManagerResetResource.class);
         router.attach("/participants", SessionManagerParticipantsResource.class);
+        router.attach("/pathStats", SessionManagerPathStats.class);
         return router;
 	}
 
