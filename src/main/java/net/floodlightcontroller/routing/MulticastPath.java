@@ -165,7 +165,9 @@ public class MulticastPath implements Comparable<MulticastPath> {
     public U64 getLatency() { 
     	U64 latency = U64.ZERO;
         for (Path path:swIdToPathMap.values()) {
-        	latency.add(path.getLatency());
+        	if (path.getLatency() != null) { // By default Path doesn't initialize U64 latency
+        		latency.add(path.getLatency());
+        	}
         }
         return latency;
     }
