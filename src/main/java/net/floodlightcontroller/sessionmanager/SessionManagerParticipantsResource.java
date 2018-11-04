@@ -19,13 +19,27 @@ public class SessionManagerParticipantsResource extends ServerResource
 	                get(IMulticastService.class.getCanonicalName());
 	        Set<ParticipantGroupAddress> participantGroupAddresses = ims.getAllParticipantGroupAddresses();
 	        StringBuilder sb = new StringBuilder();
+	        sb.append('{');
 	        for (ParticipantGroupAddress participantGroupAddress: participantGroupAddresses) {
-	        	sb.append("(" + participantGroupAddress + "): \n");
+	        	sb.append("\"" + participantGroupAddress + "\" : [");
 	        	Set<MacVlanPair> participantIntfs = ims.getParticipantIntfs(participantGroupAddress);
 	        	for (MacVlanPair participantIntf: participantIntfs) {
-	        		sb.append("\t" + participantIntf + "\n");
+	        		sb.append("\"" + ims.getParticipantAP(participantGroupAddress, participantIntf).iterator().next() + " : " + participantIntf + "\",");
 	        	}
+	        	if (participantIntfs.isEmpty()) {
+	        		sb.append(']');
+	        	}
+	        	else {
+	        		sb.setCharAt(sb.length() - 1, ']');
+	        	}
+	        	sb.append(',');
 	        }
+        	if (participantGroupAddresses.isEmpty()) {
+        		sb.append('}');
+        	}
+        	else {
+        		sb.setCharAt(sb.length() - 1, '}');
+        	}
 	        return sb.toString();
         } catch(Exception ex) {
         	return "Fail\n" + ex;
