@@ -217,6 +217,7 @@ public class SessionManager implements IOFMessageListener, IFloodlightModule, IM
 					ParticipantGroupAddress pgAddress2 = new ParticipantGroupAddress(null, null, streamAddress, streamPort2);
 					
 					logger.info(String.format("(%s), %s, %s", pgAddress1, participantIntf, participantAp));
+					multicastingService.addParticipant(pgAddress1, participantIntf, participantAp);
 					multicastingService.addParticipant(pgAddress2, participantIntf, participantAp);
 				}
 				catch (Exception ex) {
