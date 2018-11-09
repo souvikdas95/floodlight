@@ -995,7 +995,7 @@ public class TopologyInstance {
                     // Add Cost
                     Integer _cost = (linkCost == null) ? null : linkCost.get(l);
                     if (_cost == null) {
-                    	_cost = 1;
+                    	_cost = 0;
                     }
                     cost += _cost;
                 }
