@@ -1,6 +1,7 @@
 package net.floodlightcontroller.mymodule;
 
 import io.prometheus.client.Counter;
+import io.prometheus.client.Gauge;
 import io.prometheus.client.exporter.HTTPServer;
 import io.prometheus.client.hotspot.DefaultExports;
 
@@ -17,6 +18,7 @@ import org.projectfloodlight.openflow.protocol.OFPacketIn;
 import org.projectfloodlight.openflow.protocol.OFType;
 import org.projectfloodlight.openflow.protocol.OFVersion;
 import org.projectfloodlight.openflow.protocol.match.Match;
+import org.projectfloodlight.openflow.types.DatapathId;
 import org.projectfloodlight.openflow.types.EthType;
 import org.projectfloodlight.openflow.types.IPv4Address;
 import org.projectfloodlight.openflow.types.IpProtocol;
@@ -36,6 +38,7 @@ import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.core.types.NodePortTuple;
 import net.floodlightcontroller.devicemanager.IDeviceService;
 import net.floodlightcontroller.packet.ARP;
 import net.floodlightcontroller.packet.Ethernet;
@@ -46,6 +49,8 @@ import net.floodlightcontroller.packet.TCP;
 import net.floodlightcontroller.packet.UDP;
 import net.floodlightcontroller.routing.IRoutingService;
 import net.floodlightcontroller.statistics.IStatisticsService;
+import net.floodlightcontroller.statistics.SwitchPortBandwidth;
+import net.floodlightcontroller.threadpool.IThreadPoolService;
 import net.floodlightcontroller.topology.ITopologyService;
 import net.floodlightcontroller.util.OFMessageUtils;
 
@@ -61,11 +66,23 @@ public class MyModule implements IFloodlightModule, IOFMessageListener {
 		     .labelNames("myLabel1", "myLabel2", "myLabel3") // optional
 		     .help("myHelp")
 		     .register();
+	final Gauge mySwBwRx = Gauge.build()
+		     .name("mySwBwRx")
+		     .labelNames("dpId", "port")
+		     .help("swBwRx")
+		     .register();
+	final Gauge mySwBwTx = Gauge.build()
+		     .name("mySwBwTx")
+		     .labelNames("dpId", "port")
+		     .help("SwTx")
+		     .register();
+	
 	
 	private IDeviceService deviceService;
 	private IFloodlightProviderService floodlightProviderService;
 	private IRoutingService routingService;
 	private IStatisticsService statisticsService;
+	private IThreadPoolService threadPoolService;
 	private ITopologyService topologyService;
 
 	@Override
@@ -107,6 +124,7 @@ public class MyModule implements IFloodlightModule, IOFMessageListener {
 		l.add(IFloodlightProviderService.class);
 		l.add(IRoutingService.class);
 		l.add(IStatisticsService.class);
+		l.add(IThreadPoolService.class);
 		l.add(ITopologyService.class);
 		return l;
 	}
@@ -117,6 +135,7 @@ public class MyModule implements IFloodlightModule, IOFMessageListener {
 		floodlightProviderService = context.getServiceImpl(IFloodlightProviderService.class);
 		routingService = context.getServiceImpl(IRoutingService.class);
 		statisticsService = context.getServiceImpl(IStatisticsService.class);
+		threadPoolService = context.getServiceImpl(IThreadPoolService.class);
 		topologyService = context.getServiceImpl(ITopologyService.class);
 	}
 
@@ -124,6 +143,29 @@ public class MyModule implements IFloodlightModule, IOFMessageListener {
 	public void startUp(FloodlightModuleContext context) throws FloodlightModuleException {
 		// Export Floodlight JVM Metrics in Prometheus
 		DefaultExports.initialize();
+		
+		// Export Bandwidth Switch RX/TX in Prometheus
+		threadPoolService.getScheduledExecutor().execute(new Runnable() {
+			@Override
+			public void run() {
+				while (true) {
+					for (NodePortTuple npt: topologyService.getAllBroadcastPorts()) {
+						DatapathId dpId = npt.getNodeId();
+						OFPort port = npt.getPortId();
+						SwitchPortBandwidth switchPortBandwidth = statisticsService.getBandwidthConsumption(dpId, port);
+						mySwBwRx.labels(dpId.toString(), port.toString()).set(switchPortBandwidth.getBitsPerSecondRx().getValue());
+						mySwBwTx.labels(dpId.toString(), port.toString()).set(switchPortBandwidth.getBitsPerSecondTx().getValue());
+					}
+					try {
+						Thread.sleep(1000);
+					} catch (InterruptedException e) {
+						StringWriter errors = new StringWriter();
+						e.printStackTrace(new PrintWriter(errors));
+						log.error(errors.toString());
+					}
+				}
+			}
+		});
 		
 		// Start Prometheus HTTP Export Server
 		try {
