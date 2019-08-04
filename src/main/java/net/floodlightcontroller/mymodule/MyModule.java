@@ -141,6 +141,10 @@ public class MyModule implements IFloodlightModule, IOFMessageListener {
 
 	@Override
 	public void startUp(FloodlightModuleContext context) throws FloodlightModuleException {
+		// Add Listeners
+		floodlightProviderService.addOFMessageListener(OFType.PACKET_IN, this);
+		floodlightProviderService.addOFMessageListener(OFType.FLOW_REMOVED, this);
+		
 		// Export Floodlight JVM Metrics in Prometheus
 		DefaultExports.initialize();
 		
