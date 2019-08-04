@@ -56,22 +56,22 @@ import net.floodlightcontroller.util.OFMessageUtils;
 
 public class MyModule implements IFloodlightModule, IOFMessageListener {
 
-	protected static Logger log = LoggerFactory.getLogger(MyModule.class);
+	protected static final Logger log = LoggerFactory.getLogger(MyModule.class);
 
 	// Export Custom Metrics in Prometheus
-	final Counter myCounter = Counter.build()
+	private static final Counter myCounter = Counter.build()
 		     .name("myCounter")
 		     .namespace("myNamespace") // optional
 		     .subsystem("mySubsystem") // optional
 		     .labelNames("myLabel1", "myLabel2", "myLabel3") // optional
 		     .help("myHelp")
 		     .register();
-	final Gauge mySwBwRx = Gauge.build()
+	private static final Gauge mySwBwRx = Gauge.build()
 		     .name("mySwBwRx")
 		     .labelNames("dpId", "port")
 		     .help("swBwRx")
 		     .register();
-	final Gauge mySwBwTx = Gauge.build()
+	private static final Gauge mySwBwTx = Gauge.build()
 		     .name("mySwBwTx")
 		     .labelNames("dpId", "port")
 		     .help("swBwTx")
