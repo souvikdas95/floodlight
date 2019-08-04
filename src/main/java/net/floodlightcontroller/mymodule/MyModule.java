@@ -58,25 +58,9 @@ public class MyModule implements IFloodlightModule, IOFMessageListener {
 
 	protected static final Logger log = LoggerFactory.getLogger(MyModule.class);
 
-	// Export Custom Metrics in Prometheus
-	private static final Counter myCounter = Counter.build()
-		     .name("myCounter")
-		     .namespace("myNamespace") // optional
-		     .subsystem("mySubsystem") // optional
-		     .labelNames("myLabel1", "myLabel2", "myLabel3") // optional
-		     .help("myHelp")
-		     .register();
-	private static final Gauge mySwBwRx = Gauge.build()
-		     .name("mySwBwRx")
-		     .labelNames("dpId", "port")
-		     .help("swBwRx")
-		     .register();
-	private static final Gauge mySwBwTx = Gauge.build()
-		     .name("mySwBwTx")
-		     .labelNames("dpId", "port")
-		     .help("swBwTx")
-		     .register();
-	
+	private Counter myCounter;
+	private Gauge mySwBwRx;
+	private Gauge mySwBwTx;
 	
 	private IDeviceService deviceService;
 	private IFloodlightProviderService floodlightProviderService;
@@ -137,6 +121,25 @@ public class MyModule implements IFloodlightModule, IOFMessageListener {
 		statisticsService = context.getServiceImpl(IStatisticsService.class);
 		threadPoolService = context.getServiceImpl(IThreadPoolService.class);
 		topologyService = context.getServiceImpl(ITopologyService.class);
+		
+		// Export Custom Metrics in Prometheus
+		myCounter = Counter.build()
+			     .name("myCounter")
+			     .namespace("myNamespace") // optional
+			     .subsystem("mySubsystem") // optional
+			     .labelNames("myLabel1", "myLabel2", "myLabel3") // optional
+			     .help("myHelp")
+			     .register();
+		mySwBwRx = Gauge.build()
+			     .name("mySwBwRx")
+			     .labelNames("dpId", "port")
+			     .help("swBwRx")
+			     .register();
+		mySwBwTx = Gauge.build()
+			     .name("mySwBwTx")
+			     .labelNames("dpId", "port")
+			     .help("swBwTx")
+			     .register();
 	}
 
 	@Override
