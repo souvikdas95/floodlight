@@ -127,7 +127,7 @@ public class MyModule implements IFloodlightModule, IOFMessageListener {
 			     .name("myCounter")
 			     .namespace("myNamespace") // optional
 			     .subsystem("mySubsystem") // optional
-			     .labelNames("myLabel1", "myLabel2", "myLabel3") // optional
+			     .labelNames("myLabel1", "myLabel2") // optional
 			     .help("myHelp")
 			     .register();
 		mySwBwRx = Gauge.build()
@@ -156,18 +156,24 @@ public class MyModule implements IFloodlightModule, IOFMessageListener {
 			@Override
 			public void run() {
 				while (true) {
-					Map<NodePortTuple, SwitchPortBandwidth> switchPortBandwidthMap = 
-							statisticsService.getBandwidthConsumption();
-					for (NodePortTuple npt: switchPortBandwidthMap.keySet()) {
-						DatapathId dpId = npt.getNodeId();
-						OFPort port = npt.getPortId();
-						SwitchPortBandwidth switchPortBandwidth = switchPortBandwidthMap.get(npt);
-						mySwBwRx.labels(dpId.toString(), port.toString()).set(switchPortBandwidth.getBitsPerSecondRx().getValue());
-						mySwBwTx.labels(dpId.toString(), port.toString()).set(switchPortBandwidth.getBitsPerSecondTx().getValue());
-					}
 					try {
-						Thread.sleep(1000);
-					} catch (InterruptedException e) {
+						Map<NodePortTuple, SwitchPortBandwidth> switchPortBandwidthMap = 
+								statisticsService.getBandwidthConsumption();
+						for (NodePortTuple npt: switchPortBandwidthMap.keySet()) {
+							DatapathId dpId = npt.getNodeId();
+							OFPort port = npt.getPortId();
+							SwitchPortBandwidth switchPortBandwidth = switchPortBandwidthMap.get(npt);
+							mySwBwRx.labels(dpId.toString(), port.toString()).set(switchPortBandwidth.getBitsPerSecondRx().getValue());
+							mySwBwTx.labels(dpId.toString(), port.toString()).set(switchPortBandwidth.getBitsPerSecondTx().getValue());
+						}
+						try {
+							Thread.sleep(1000);
+						} catch (Exception e) {
+							StringWriter errors = new StringWriter();
+							e.printStackTrace(new PrintWriter(errors));
+							log.error(errors.toString());
+						}
+					} catch (Exception e) {
 						StringWriter errors = new StringWriter();
 						e.printStackTrace(new PrintWriter(errors));
 						log.error(errors.toString());
@@ -222,7 +228,13 @@ public class MyModule implements IFloodlightModule, IOFMessageListener {
 
 	private Command processPacketInMessage(IOFSwitch sw, OFPacketIn msg, FloodlightContext cntx) {
 		// Prometheus Counter Increment
-		myCounter.inc();
+		try {
+			myCounter.labels("myValue1", "myValue2").inc();
+		} catch (Exception e) {
+			StringWriter errors = new StringWriter();
+			e.printStackTrace(new PrintWriter(errors));
+			log.error(errors.toString());
+		}
 		
 		// OFSwitch
 		OFFactory factory = sw.getOFFactory();
