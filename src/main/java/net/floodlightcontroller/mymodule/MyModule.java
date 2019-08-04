@@ -74,7 +74,7 @@ public class MyModule implements IFloodlightModule, IOFMessageListener {
 	final Gauge mySwBwTx = Gauge.build()
 		     .name("mySwBwTx")
 		     .labelNames("dpId", "port")
-		     .help("SwTx")
+		     .help("swBwTx")
 		     .register();
 	
 	
@@ -149,10 +149,12 @@ public class MyModule implements IFloodlightModule, IOFMessageListener {
 			@Override
 			public void run() {
 				while (true) {
-					for (NodePortTuple npt: topologyService.getAllBroadcastPorts()) {
+					Map<NodePortTuple, SwitchPortBandwidth> switchPortBandwidthMap = 
+							statisticsService.getBandwidthConsumption();
+					for (NodePortTuple npt: switchPortBandwidthMap.keySet()) {
 						DatapathId dpId = npt.getNodeId();
 						OFPort port = npt.getPortId();
-						SwitchPortBandwidth switchPortBandwidth = statisticsService.getBandwidthConsumption(dpId, port);
+						SwitchPortBandwidth switchPortBandwidth = switchPortBandwidthMap.get(npt);
 						mySwBwRx.labels(dpId.toString(), port.toString()).set(switchPortBandwidth.getBitsPerSecondRx().getValue());
 						mySwBwTx.labels(dpId.toString(), port.toString()).set(switchPortBandwidth.getBitsPerSecondTx().getValue());
 					}
@@ -208,7 +210,7 @@ public class MyModule implements IFloodlightModule, IOFMessageListener {
 		Match match = msg.getMatch();
 
 		// TODO
-		return null;
+		return Command.CONTINUE;
 	}
 
 	private Command processPacketInMessage(IOFSwitch sw, OFPacketIn msg, FloodlightContext cntx) {
